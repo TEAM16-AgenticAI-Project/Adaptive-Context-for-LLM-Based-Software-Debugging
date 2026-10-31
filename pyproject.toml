@@ -1,0 +1,24 @@
+[project]
+name = "adaptive-context"
+version = "0.1.0"
+description = "Adaptive context management for LLM-based Python debugging (retrieval, compression, sequencing, token budget)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+chroma = ["chromadb", "sentence-transformers"]
+dev = ["pytest"]
+
+[project.scripts]
+adaptive-context = "adaptive_context.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
