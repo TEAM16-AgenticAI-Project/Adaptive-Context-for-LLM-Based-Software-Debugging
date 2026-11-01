@@ -1,0 +1,1189 @@
+{
+ "args": {
+  "n": 300,
+  "seed": 0,
+  "budgets": "600",
+  "rounds": 6,
+  "workers": 10,
+  "trace": 0,
+  "out": "results"
+ },
+ "revision": {
+  "commit": "1a66b120f0daed93a44cd205610a7286170af233",
+  "dirty": false
+ },
+ "llm": "SimulatedLLM(miss_rate=0)",
+ "dataset": "A (generated)",
+ "gen_params": {
+  "n_modules": 40,
+  "n_distractor_chains": 30,
+  "max_depth": 4,
+  "filler_lines": 4
+ },
+ "note": "simulator numbers, not model quality",
+ "seed": 0,
+ "bug_report": "After the latest release, `round_bulk_total(7)` returns 33 but the refund team expects 15. The total calculation in the refund flow looks wrong somewhere. Find the root cause and suggest a fix.",
+ "evaluator_only_truth": {
+  "file": "pkg/loyalty_035.py",
+  "function": "apply_final_quota",
+  "chunk_id": "pkg/loyalty_035.py::apply_final_quota",
+  "depth": 3,
+  "chain": [
+   "round_bulk_total",
+   "settle_weekly_credit",
+   "normalize_bulk_credit",
+   "apply_final_quota"
+  ],
+  "entry": "round_bulk_total"
+ },
+ "runs": {
+  "600/legacy/adaptive": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "apply_final_quota",
+    "cause": "apply_final_quota docstring says 'Subtract 9 from the input.' but code does 'return x + 9'",
+    "fix": "return x - 9",
+    "confidence": "high",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": true,
+    "grounded": true,
+    "evidence": true,
+    "fix_ok": true,
+    "in_tok": 3148,
+    "out_tok": 115,
+    "tokens": 3263,
+    "calls": 4,
+    "retrievals": 4,
+    "rounds": 4,
+    "latency": 2.6996666666666664,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 856,
+    "bug_level": 0,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 3,
+     "dropped": 0,
+     "context_tokens": 446,
+     "prompt_tokens": 665,
+     "code_budget": 600,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       0
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       0
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "settle_weekly_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 4,
+     "dropped": 0,
+     "context_tokens": 578,
+     "prompt_tokens": 797,
+     "code_budget": 600,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       0
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       0
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       0
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "normalize_bulk_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 3,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 637,
+     "prompt_tokens": 856,
+     "code_budget": 600,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       0
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       0
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 4,
+     "allowed": "request, diagnose",
+     "chunks": 6,
+     "dropped": 0,
+     "context_tokens": 612,
+     "prompt_tokens": 831,
+     "code_budget": 600,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       0
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  },
+  "600/legacy/adaptive_graph": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "apply_final_quota",
+    "cause": "apply_final_quota docstring says 'Subtract 9 from the input.' but code does 'return x + 9'",
+    "fix": "return x - 9",
+    "confidence": "high",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": true,
+    "grounded": true,
+    "evidence": true,
+    "fix_ok": true,
+    "in_tok": 1687,
+    "out_tok": 77,
+    "tokens": 1764,
+    "calls": 2,
+    "retrievals": 2,
+    "rounds": 2,
+    "latency": 1.4661666666666666,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 856,
+    "bug_level": 0,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 637,
+     "prompt_tokens": 856,
+     "code_budget": 600,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       0
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       0
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 6,
+     "dropped": 0,
+     "context_tokens": 612,
+     "prompt_tokens": 831,
+     "code_budget": 600,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       0
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  },
+  "600/old_pack/adaptive": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "round_bulk_total",
+    "cause": "Could not verify the full call chain; best guess from partial evidence.",
+    "fix": "",
+    "confidence": "low",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": false,
+    "grounded": false,
+    "evidence": true,
+    "fix_ok": false,
+    "in_tok": 2352,
+    "out_tok": 106,
+    "tokens": 2458,
+    "calls": 4,
+    "retrievals": 4,
+    "rounds": 4,
+    "latency": 2.5220000000000002,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 595,
+    "bug_level": 1,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 3,
+     "dropped": 0,
+     "context_tokens": 376,
+     "prompt_tokens": 595,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       0
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "settle_weekly_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 4,
+     "dropped": 0,
+     "context_tokens": 368,
+     "prompt_tokens": 587,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "normalize_bulk_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 3,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 362,
+     "prompt_tokens": 581,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 4,
+     "allowed": "request, diagnose",
+     "chunks": 6,
+     "dropped": 0,
+     "context_tokens": 371,
+     "prompt_tokens": 590,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       2
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       2
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       2
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  },
+  "600/old_pack/adaptive_graph": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "round_bulk_total",
+    "cause": "Could not verify the full call chain; best guess from partial evidence.",
+    "fix": "",
+    "confidence": "low",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": false,
+    "grounded": false,
+    "evidence": true,
+    "fix_ok": false,
+    "in_tok": 1171,
+    "out_tok": 68,
+    "tokens": 1239,
+    "calls": 2,
+    "retrievals": 2,
+    "rounds": 2,
+    "latency": 1.3351666666666666,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 590,
+    "bug_level": 1,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 362,
+     "prompt_tokens": 581,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 6,
+     "dropped": 0,
+     "context_tokens": 371,
+     "prompt_tokens": 590,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       2
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       2
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       2
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  },
+  "600/new/adaptive": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "apply_final_quota",
+    "cause": "apply_final_quota docstring says 'Subtract 9 from the input.' but code does 'return x + 9'",
+    "fix": "return x - 9",
+    "confidence": "high",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": true,
+    "grounded": true,
+    "evidence": true,
+    "fix_ok": true,
+    "in_tok": 2318,
+    "out_tok": 115,
+    "tokens": 2433,
+    "calls": 4,
+    "retrievals": 4,
+    "rounds": 4,
+    "latency": 2.5613333333333337,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 595,
+    "bug_level": 1,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 3,
+     "dropped": 0,
+     "context_tokens": 376,
+     "prompt_tokens": 595,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       0
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "settle_weekly_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 4,
+     "dropped": 0,
+     "context_tokens": 368,
+     "prompt_tokens": 587,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "normalize_bulk_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 3,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 362,
+     "prompt_tokens": 581,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 4,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 1,
+     "context_tokens": 338,
+     "prompt_tokens": 557,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [
+      "pkg/loyalty_004.py::scale_weekly_total"
+     ],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       3
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  },
+  "600/new/adaptive_graph": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "apply_final_quota",
+    "cause": "apply_final_quota docstring says 'Subtract 9 from the input.' but code does 'return x + 9'",
+    "fix": "return x - 9",
+    "confidence": "high",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": true,
+    "grounded": true,
+    "evidence": true,
+    "fix_ok": true,
+    "in_tok": 1166,
+    "out_tok": 77,
+    "tokens": 1243,
+    "calls": 2,
+    "retrievals": 2,
+    "rounds": 2,
+    "latency": 1.3793333333333333,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 585,
+    "bug_level": 1,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 362,
+     "prompt_tokens": 581,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 6,
+     "dropped": 0,
+     "context_tokens": 366,
+     "prompt_tokens": 585,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       2
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       2
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       2
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       3
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  },
+  "600/new_notes/adaptive": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "apply_final_quota",
+    "cause": "apply_final_quota docstring says 'Subtract 9 from the input.' but code does 'return x + 9'",
+    "fix": "return x - 9",
+    "confidence": "high",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": true,
+    "grounded": true,
+    "evidence": true,
+    "fix_ok": true,
+    "in_tok": 2318,
+    "out_tok": 115,
+    "tokens": 2433,
+    "calls": 4,
+    "retrievals": 4,
+    "rounds": 4,
+    "latency": 2.5613333333333337,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 595,
+    "bug_level": 1,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 3,
+     "dropped": 0,
+     "context_tokens": 376,
+     "prompt_tokens": 595,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       0
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "settle_weekly_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 4,
+     "dropped": 0,
+     "context_tokens": 368,
+     "prompt_tokens": 587,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       0
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "normalize_bulk_credit"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 3,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 362,
+     "prompt_tokens": 581,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 4,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 1,
+     "context_tokens": 338,
+     "prompt_tokens": 557,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [
+      "pkg/loyalty_004.py::scale_weekly_total"
+     ],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       3
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  },
+  "600/new_notes/adaptive_graph": {
+   "diagnosis": {
+    "file": "pkg/loyalty_035.py",
+    "function": "apply_final_quota",
+    "cause": "apply_final_quota docstring says 'Subtract 9 from the input.' but code does 'return x + 9'",
+    "fix": "return x - 9",
+    "confidence": "high",
+    "valid": true
+   },
+   "stop_reason": "diagnosed",
+   "score": {
+    "file_hit": true,
+    "func_hit": true,
+    "grounded": true,
+    "evidence": true,
+    "fix_ok": true,
+    "in_tok": 1166,
+    "out_tok": 77,
+    "tokens": 1243,
+    "calls": 2,
+    "retrievals": 2,
+    "rounds": 2,
+    "latency": 1.3793333333333333,
+    "failures": 0,
+    "stop": "diagnosed",
+    "over_rounds": 0,
+    "max_prompt": 585,
+    "bug_level": 1,
+    "pinned_dropped": 0
+   },
+   "trace": [
+    {
+     "round": 1,
+     "allowed": "request, diagnose",
+     "chunks": 5,
+     "dropped": 0,
+     "context_tokens": 362,
+     "prompt_tokens": 581,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       1
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       1
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       1
+      ]
+     ],
+     "action": "request",
+     "symbols": [
+      "apply_final_quota"
+     ],
+     "progress": 1
+    },
+    {
+     "round": 2,
+     "allowed": "request, diagnose",
+     "chunks": 6,
+     "dropped": 0,
+     "context_tokens": 366,
+     "prompt_tokens": 585,
+     "code_budget": 315,
+     "over_budget": false,
+     "dropped_ids": [],
+     "dropped_pinned": [],
+     "items": [
+      [
+       "pkg/loyalty_035.py::round_bulk_total",
+       1
+      ],
+      [
+       "pkg/inventory_018.py::settle_weekly_credit",
+       2
+      ],
+      [
+       "pkg/pricing_007.py::normalize_bulk_credit",
+       2
+      ],
+      [
+       "pkg/loyalty_035.py::apply_final_quota",
+       1
+      ],
+      [
+       "pkg/pricing_014.py::round_primary_surcharge",
+       2
+      ],
+      [
+       "pkg/loyalty_004.py::scale_weekly_total",
+       3
+      ]
+     ],
+     "action": "diagnose"
+    }
+   ]
+  }
+ }
+}

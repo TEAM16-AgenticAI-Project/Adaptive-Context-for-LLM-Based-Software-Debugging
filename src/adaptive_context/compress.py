@@ -1,4 +1,4 @@
-"""Context compression. Level 0 full, 1 trimmed, 2 outline, 3 signature.
+"""Context compression. Level 0 full, 1 trimmed, 2 outline, 3 signature, 4 note (stand-in for evicted code).
 
 The first docstring line is kept at every level (it states the intended behaviour,
 which is key evidence for a bug). Level 1 strips comments and long docstrings.
@@ -9,10 +9,13 @@ from __future__ import annotations
 import ast
 import textwrap
 
+from .chunking import parse_source
 from .models import Chunk
 
-LEVELS = ("full", "trimmed", "outline", "signature")
+LEVELS = ("full", "trimmed", "outline", "signature", "note")
+NOTE = 4
 _FN = (ast.FunctionDef, ast.AsyncFunctionDef)
+_MAX_NOTE_CALLS = 5
 
 
 def _doc_node(fn):
@@ -34,13 +37,39 @@ def _line_trunc(text: str, level: int) -> str:
     return text if len(lines) <= keep else "\n".join(lines[:keep] + ["# ... truncated"])
 
 
-def compress(chunk: Chunk, level: int, focus=()) -> str:
-    level = max(0, min(3, level))
-    if level == 0:
-        return chunk.text
+def note(chunk: Chunk) -> str:
+    """Two-line stand-in for evicted code: the signature, then the first docstring line, the names it calls and
+    its return lines. It keeps what the model already checked without the body."""
     src = textwrap.dedent(chunk.text)
     try:
-        tree = ast.parse(src)
+        tree = parse_source(src)
+    except (SyntaxError, ValueError):
+        tree = None
+    if tree is None or not tree.body or not isinstance(tree.body[0], _FN):
+        first = next((ln.strip() for ln in chunk.text.splitlines() if ln.strip()), "")
+        return f"# note: {first} ... ({chunk.end - chunk.start + 1} lines evicted)"
+    fn = tree.body[0]
+    lines = src.splitlines()
+    head = " ".join(ln.strip() for ln in lines[fn.lineno - 1:fn.body[0].lineno - 1])
+    doc = _doc_node(fn)
+    parts = [f'"{_first_line(doc.value.value)}"'] if doc is not None else []
+    calls = [c for c in chunk.calls if "." not in c][:_MAX_NOTE_CALLS]
+    if calls:
+        parts.append("calls " + ", ".join(f"{c}()" for c in calls))
+    rets = [ln.strip() for ln in lines[fn.body[0].lineno - 1:fn.end_lineno] if ln.strip().startswith(("return", "raise"))]
+    parts.extend(rets)
+    return f"{head}\n    # note (body evicted): " + "; ".join(parts)
+
+
+def compress(chunk: Chunk, level: int, focus=()) -> str:
+    level = max(0, min(NOTE, level))
+    if level == 0:
+        return chunk.text
+    if level == NOTE:
+        return note(chunk)
+    src = textwrap.dedent(chunk.text)
+    try:
+        tree = parse_source(src)
     except SyntaxError:
         return _line_trunc(chunk.text, level)
     if not tree.body or not isinstance(tree.body[0], _FN):
