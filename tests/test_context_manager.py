@@ -1,8 +1,11 @@
 """Context manager: chunking, lookup, import-aware callees, budget packing, notes, adaptive loop bookkeeping."""
 import warnings
 
+from adaptive_context.budget import HEADER_TOKENS, code_budget, pack
 from adaptive_context.chunking import chunk_repo, chunk_source
+from adaptive_context.compress import compress
 from adaptive_context.retrieval import BM25Retriever
+from adaptive_context.tokens import count_tokens
 
 
 def _long_module(n_consts: int) -> str:
@@ -111,3 +114,54 @@ def test_unresolved_calls_fall_back_to_name_matching():
     r = BM25Retriever(chunk_repo({**REPO, "pkg/x.py": "def f(cmd):\n    return cmd.match(1)\n"}))
     got = sorted(_ids(r.callees(r.by_id["pkg/x.py::f"])))
     assert got == ["pkg/rules/git_push.py::match", "pkg/rules/ls_all.py::match"]
+
+
+# ---- budget -----------------------------------------------------------------------------------------------------
+def _fn(name: str, body_lines: int = 12):
+    src = (f"def {name}(x):\n    \"\"\"Add 3 to the input.\n\n    Long notes that compression removes.\n    \"\"\"\n"
+           + "".join(f"    v{i} = len(str(x)) + {i}  # statement that trimming keeps\n" for i in range(body_lines))
+           + "    y = helper(x)\n    return y + 3\n")
+    return chunk_source(f"{name}.py", src)[0]
+
+
+def test_code_budget_reserves_overhead():
+    system, report = "s" * 400, "r" * 200                 # 100 + 50 tokens
+    assert code_budget(1000, system, report) == 850
+    assert code_budget(1000) == 1000
+    assert code_budget(300, system, report, floor=200) == 200   # floor wins
+    assert code_budget(300, system, report, floor=0) == 150
+
+
+def test_pinned_chunks_stay_trimmed_or_better():
+    chunks = [_fn(f"f{i}") for i in range(6)]
+    pinned = {chunks[0].id, chunks[1].id}
+    res = pack([(c, 1.0) for c in chunks], 260, pinned=pinned)
+    lv = {p.chunk.id: p.level for p in res.items}
+    assert all(lv[i] <= 1 for i in pinned if i in lv)
+    assert pinned <= set(lv)                              # unpinned went first
+    assert any(lvl >= 2 for cid, lvl in lv.items() if cid not in pinned) or set(res.dropped) - pinned
+    old = pack([(c, 1.0) for c in chunks], 260)           # old packing: same chunks can go to outline/signature
+    assert any(p.level >= 2 for p in old.items)
+
+
+def test_unpinned_dropped_before_pinned_and_oldest_pinned_first():
+    chunks = [_fn(f"f{i}", 30) for i in range(4)]
+    one = count_tokens(compress(chunks[0], 1)) + HEADER_TOKENS
+    pinned = {c.id for c in chunks[:3]}
+    scored = [(chunks[3], 5.0)] + [(c, 1e6) for c in chunks[:3]]   # equal pin scores, list order = request order
+    res = pack(scored, 2 * one + 5, pinned=pinned)
+    assert res.dropped[0] == chunks[3].id                 # unpinned first, despite being listed first
+    assert res.dropped_pinned == [chunks[0].id]           # then the oldest request
+    assert [p.chunk.id for p in res.items] == [chunks[2].id, chunks[1].id]
+    assert not res.over_budget and res.tokens <= 2 * one + 5
+    rec = pack([(c, 1e6 + k) for k, c in enumerate(chunks[:3])], 2 * one + 5, pinned=pinned)
+    assert rec.dropped_pinned == [chunks[0].id]           # recency scores give the same order
+
+
+def test_oversized_single_chunk_sets_over_budget():
+    c = _fn("big", 200)
+    res = pack([(c, 1.0)], 25)                            # does not fit even as a signature
+    assert res.items and res.over_budget and res.tokens > 25 and res.dropped == []
+    assert not pack([(c, 1.0)], 10_000).over_budget
+    pin = pack([(c, 1.0)], 500, pinned={c.id})            # pinned stays trimmed (~2k tokens), so it overruns
+    assert pin.items[0].level == 1 and pin.over_budget and pin.tokens > 500
