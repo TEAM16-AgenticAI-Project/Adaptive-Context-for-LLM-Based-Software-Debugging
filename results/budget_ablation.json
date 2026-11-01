@@ -1,0 +1,949 @@
+{
+ "args": {
+  "n": 300,
+  "seed": 0,
+  "budgets": "600,800,1000,1500,3000",
+  "rounds": 6,
+  "workers": 10,
+  "trace": null,
+  "out": "results"
+ },
+ "revision": {
+  "commit": "1a66b120f0daed93a44cd205610a7286170af233",
+  "dirty": false
+ },
+ "llm": "SimulatedLLM(miss_rate=0)",
+ "dataset": "A (generated)",
+ "gen_params": {
+  "n_modules": 40,
+  "n_distractor_chains": 30,
+  "max_depth": 4,
+  "filler_lines": 4
+ },
+ "note": "simulator numbers, not model quality",
+ "table": {
+  "600/legacy/adaptive": {
+   "budget": 600,
+   "arm": "legacy",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2401.1433333333334,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 886,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "600/legacy/adaptive_graph": {
+   "budget": 600,
+   "arm": "legacy",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1301.2533333333333,
+   "calls": 1.48,
+   "max_prompt_tokens": 886,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "600/old_pack/adaptive": {
+   "budget": 600,
+   "arm": "old_pack",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 0.5933333333333334,
+   "func_ci95": [
+    0.5369073596366767,
+    0.6473992000970794
+   ],
+   "grounded": 0.5933333333333334,
+   "evidence_recall": 0.7933333333333333,
+   "fix_ok": 0.5933333333333334,
+   "func_hit_from_note": 0.0,
+   "tokens": 1643.1633333333334,
+   "calls": 2.7466666666666666,
+   "max_prompt_tokens": 599,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "600/old_pack/adaptive_graph": {
+   "budget": 600,
+   "arm": "old_pack",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 0.5633333333333334,
+   "func_ci95": [
+    0.5067581755681922,
+    0.6183069899654279
+   ],
+   "grounded": 0.5633333333333334,
+   "evidence_recall": 0.83,
+   "fix_ok": 0.5633333333333334,
+   "func_hit_from_note": 0.0,
+   "tokens": 1083.4233333333334,
+   "calls": 1.7333333333333334,
+   "max_prompt_tokens": 600,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 290,
+    "forced_diagnosis": 10
+   }
+  },
+  "600/new/adaptive": {
+   "budget": 600,
+   "arm": "new",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 0.98,
+   "func_ci95": [
+    0.9570598132699448,
+    0.9908024939322289
+   ],
+   "grounded": 0.98,
+   "evidence_recall": 1.0,
+   "fix_ok": 0.98,
+   "func_hit_from_note": 0.0,
+   "tokens": 1813.8233333333333,
+   "calls": 3.03,
+   "max_prompt_tokens": 600,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.05,
+   "stop_reasons": {
+    "diagnosed": 291,
+    "forced_diagnosis": 9
+   }
+  },
+  "600/new/adaptive_graph": {
+   "budget": 600,
+   "arm": "new",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 0.98,
+   "func_ci95": [
+    0.9570598132699448,
+    0.9908024939322289
+   ],
+   "grounded": 0.98,
+   "evidence_recall": 0.9966666666666667,
+   "fix_ok": 0.98,
+   "func_hit_from_note": 0.0,
+   "tokens": 1499.4366666666667,
+   "calls": 2.4366666666666665,
+   "max_prompt_tokens": 600,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.05,
+   "stop_reasons": {
+    "diagnosed": 291,
+    "forced_diagnosis": 9
+   }
+  },
+  "600/new_notes/adaptive": {
+   "budget": 600,
+   "arm": "new_notes",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1798.4833333333333,
+   "calls": 3.0,
+   "max_prompt_tokens": 600,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.03333333333333333,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "600/new_notes/adaptive_graph": {
+   "budget": 600,
+   "arm": "new_notes",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 0.9966666666666667,
+   "evidence_recall": 0.9966666666666667,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0033333333333333335,
+   "tokens": 1484.0233333333333,
+   "calls": 2.4066666666666667,
+   "max_prompt_tokens": 600,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.03333333333333333,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/legacy/adaptive": {
+   "budget": 800,
+   "arm": "legacy",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2560.7733333333335,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1079,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/legacy/adaptive_graph": {
+   "budget": 800,
+   "arm": "legacy",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1445.7666666666667,
+   "calls": 1.48,
+   "max_prompt_tokens": 1078,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/old_pack/adaptive": {
+   "budget": 800,
+   "arm": "old_pack",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2251.45,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 797,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/old_pack/adaptive_graph": {
+   "budget": 800,
+   "arm": "old_pack",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 0.9933333333333333,
+   "func_ci95": [
+    0.9760219257685385,
+    0.9981698899670288
+   ],
+   "grounded": 0.9933333333333333,
+   "evidence_recall": 1.0,
+   "fix_ok": 0.9933333333333333,
+   "func_hit_from_note": 0.0,
+   "tokens": 1189.3433333333332,
+   "calls": 1.48,
+   "max_prompt_tokens": 796,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/new/adaptive": {
+   "budget": 800,
+   "arm": "new",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2252.0066666666667,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 798,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/new/adaptive_graph": {
+   "budget": 800,
+   "arm": "new",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1189.94,
+   "calls": 1.48,
+   "max_prompt_tokens": 797,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/new_notes/adaptive": {
+   "budget": 800,
+   "arm": "new_notes",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2252.0066666666667,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 798,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "800/new_notes/adaptive_graph": {
+   "budget": 800,
+   "arm": "new_notes",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1189.94,
+   "calls": 1.48,
+   "max_prompt_tokens": 797,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/legacy/adaptive": {
+   "budget": 1000,
+   "arm": "legacy",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/legacy/adaptive_graph": {
+   "budget": 1000,
+   "arm": "legacy",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1494.6533333333334,
+   "calls": 1.48,
+   "max_prompt_tokens": 1279,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/old_pack/adaptive": {
+   "budget": 1000,
+   "arm": "old_pack",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2509.1066666666666,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 996,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/old_pack/adaptive_graph": {
+   "budget": 1000,
+   "arm": "old_pack",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1409.5666666666666,
+   "calls": 1.48,
+   "max_prompt_tokens": 996,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/new/adaptive": {
+   "budget": 1000,
+   "arm": "new",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2509.0233333333335,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 996,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/new/adaptive_graph": {
+   "budget": 1000,
+   "arm": "new",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1410.6466666666668,
+   "calls": 1.48,
+   "max_prompt_tokens": 995,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/new_notes/adaptive": {
+   "budget": 1000,
+   "arm": "new_notes",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2509.0233333333335,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 996,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1000/new_notes/adaptive_graph": {
+   "budget": 1000,
+   "arm": "new_notes",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1410.6466666666668,
+   "calls": 1.48,
+   "max_prompt_tokens": 995,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/legacy/adaptive": {
+   "budget": 1500,
+   "arm": "legacy",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/legacy/adaptive_graph": {
+   "budget": 1500,
+   "arm": "legacy",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/old_pack/adaptive": {
+   "budget": 1500,
+   "arm": "old_pack",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/old_pack/adaptive_graph": {
+   "budget": 1500,
+   "arm": "old_pack",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/new/adaptive": {
+   "budget": 1500,
+   "arm": "new",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/new/adaptive_graph": {
+   "budget": 1500,
+   "arm": "new",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/new_notes/adaptive": {
+   "budget": 1500,
+   "arm": "new_notes",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "1500/new_notes/adaptive_graph": {
+   "budget": 1500,
+   "arm": "new_notes",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/legacy/adaptive": {
+   "budget": 3000,
+   "arm": "legacy",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/legacy/adaptive_graph": {
+   "budget": 3000,
+   "arm": "legacy",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/old_pack/adaptive": {
+   "budget": 3000,
+   "arm": "old_pack",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/old_pack/adaptive_graph": {
+   "budget": 3000,
+   "arm": "old_pack",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/new/adaptive": {
+   "budget": 3000,
+   "arm": "new",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/new/adaptive_graph": {
+   "budget": 3000,
+   "arm": "new",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/new_notes/adaptive": {
+   "budget": 3000,
+   "arm": "new_notes",
+   "system": "adaptive",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 2587.923333333333,
+   "calls": 2.9566666666666666,
+   "max_prompt_tokens": 1212,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  },
+  "3000/new_notes/adaptive_graph": {
+   "budget": 3000,
+   "arm": "new_notes",
+   "system": "adaptive_graph",
+   "n": 300,
+   "func_acc": 1.0,
+   "func_ci95": [
+    0.9873565700022643,
+    0.9999999999999999
+   ],
+   "grounded": 1.0,
+   "evidence_recall": 1.0,
+   "fix_ok": 1.0,
+   "func_hit_from_note": 0.0,
+   "tokens": 1498.48,
+   "calls": 1.48,
+   "max_prompt_tokens": 1438,
+   "runs_over_budget": 0.0,
+   "pinned_evictions": 0.0,
+   "stop_reasons": {
+    "diagnosed": 300
+   }
+  }
+ }
+}
