@@ -1,7 +1,8 @@
 """Context manager: chunking, lookup, import-aware callees, budget packing, notes, adaptive loop bookkeeping."""
 import warnings
 
-from adaptive_context.chunking import chunk_source
+from adaptive_context.chunking import chunk_repo, chunk_source
+from adaptive_context.retrieval import BM25Retriever
 
 
 def _long_module(n_consts: int) -> str:
@@ -45,3 +46,45 @@ def test_dotted_calls_recorded():
     src = "import pkg.mod as z\n\ndef f(x):\n    return z.func(x) + self_check(x)\n"
     calls = next(c for c in chunk_source("a.py", src) if c.name == "f").calls
     assert {"func", "z.func", "self_check"} <= set(calls)
+
+
+# ---- lookup -----------------------------------------------------------------------------------------------------
+REPO = {
+    "pkg/__init__.py": "",
+    "pkg/rules/__init__.py": "",
+    "pkg/rules/git_push.py": "from pkg.utils import for_app\n\n\ndef match(command):\n    return for_app(command)\n",
+    "pkg/rules/ls_all.py": "def match(command):\n    return 'ls' in command\n",
+    "pkg/utils.py": "def for_app(c):\n    return c\n\n\nclass Cache:\n    def get(self, k):\n        return k\n",
+    "tests/rules/test_git_push.py": (
+        "from pkg.rules.git_push import match\n\n\nclass TestPush:\n    def test_y(self):\n"
+        "        assert match('git push')\n\n\ndef test_x():\n    assert match('git push')\n"),
+}
+
+
+def _ids(chunks):
+    return [c.id for c in chunks]
+
+
+def test_every_lookup_form_resolves():
+    r = BM25Retriever(chunk_repo(REPO))
+    gp = ["pkg/rules/git_push.py::match"]
+    assert _ids(r.lookup("pkg.rules.git_push.match")) == gp                 # dotted module path
+    assert _ids(r.lookup("rules.git_push.match")) == gp                     # suffix of a module path
+    assert _ids(r.lookup("pkg.utils.Cache.get")) == ["pkg/utils.py::Cache.get"]   # pkg.mod.Class.method
+    assert _ids(r.lookup("pkg/rules/git_push.py::match")) == gp             # path.py::Qual.name
+    assert _ids(r.lookup("./pkg/rules/git_push.py::match")) == gp
+    assert _ids(r.lookup("rules/git_push.py::match")) == gp                 # path suffix
+    assert _ids(r.lookup("tests/rules/test_git_push.py::TestPush::test_y")) == \
+        ["tests/rules/test_git_push.py::TestPush.test_y"]                   # pytest id
+    assert _ids(r.lookup("tests/rules/test_git_push.py::test_x[git push]")) == \
+        ["tests/rules/test_git_push.py::test_x"]                            # parametrized pytest id
+    assert _ids(r.lookup("Cache.get")) == ["pkg/utils.py::Cache.get"]       # Class.method
+    assert _ids(r.lookup("`for_app()`")) == ["pkg/utils.py::for_app"]       # short name, decorated
+    assert sorted(_ids(r.lookup("match"))) == ["pkg/rules/git_push.py::match", "pkg/rules/ls_all.py::match"]
+    assert r.lookup("no.such.thing") == []
+
+
+def test_lookup_returns_most_specific_tier_not_union():
+    r = BM25Retriever(chunk_repo(REPO))
+    assert len(r.lookup("pkg.rules.ls_all.match")) == 1
+    assert len(r.lookup("pkg/rules/ls_all.py::match")) == 1

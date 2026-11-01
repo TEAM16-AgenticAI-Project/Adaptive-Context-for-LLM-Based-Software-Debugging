@@ -34,6 +34,7 @@ class BM25Retriever:
             for term, tf in Counter(toks).items():
                 self.inv[term].append((i, tf))
         self.avgdl = (sum(self.dl) / len(self.dl)) if self.dl else 1.0
+        self._modules = None
 
     def search(self, query: str, k: int, exclude=frozenset()) -> list:
         n = len(self.chunks)
@@ -57,11 +58,70 @@ class BM25Retriever:
                 break
         return out
 
+    # ---- module paths -------------------------------------------------------------------------------------
+    def _module_index(self):
+        """Dotted module name -> file paths. Every suffix of a path is indexed ('a.b.c', 'b.c', 'c'), so imports
+        resolve whether or not the repo root is the import root; full names win over suffixes."""
+        if self._modules is None:
+            full, suffix = {}, defaultdict(list)
+            for path in sorted({c.path for c in self.chunks}):
+                if not path.endswith(".py"):
+                    continue
+                parts = path[:-3].split("/")
+                if parts[-1] == "__init__":
+                    parts = parts[:-1]
+                if not parts:
+                    continue
+                full.setdefault(".".join(parts), path)
+                for i in range(1, len(parts)):
+                    suffix[".".join(parts[i:])].append(path)
+            self._modules = (full, suffix)
+        return self._modules
+
+    def module_paths(self, module: str) -> list:
+        full, suffix = self._module_index()
+        if module in full:
+            return [full[module]]
+        return list(suffix.get(module, []))
+
+    def resolve_dotted(self, dotted: str) -> list:
+        """'pkg.mod.func' or 'pkg.mod.Class.method' -> chunks. The longest module prefix that names a file wins."""
+        parts = [p for p in dotted.split(".") if p]
+        for i in range(len(parts) - 1, 0, -1):
+            module, qual = ".".join(parts[:i]), ".".join(parts[i:])
+            hits = [self.by_id[f"{p}::{qual}"] for p in self.module_paths(module) if f"{p}::{qual}" in self.by_id]
+            if hits:
+                return hits
+        return []
+
+    def _by_path_qual(self, path: str, qual: str) -> list:
+        path = path.replace("\\", "/")
+        while path.startswith("./"):
+            path = path[2:]
+        if f"{path}::{qual}" in self.by_id:
+            return [self.by_id[f"{path}::{qual}"]]
+        return [c for c in self.by_qual.get(qual, []) if c.path.endswith("/" + path)]
+
     def lookup(self, name: str) -> list:
-        """Exact symbol lookup: 'path::qual', 'Class.method' or short name."""
-        name = name.strip().strip("`()")
+        """Symbol lookup, most specific form first; returns the first form that matches, never a union:
+        1. chunk id / 'path.py::Qual.name' / pytest id 'tests/t.py::TestX::test_y[param]'
+        2. dotted module path as written in imports: 'pkg.mod.func', 'pkg.mod.Class.method'
+        3. qualified name: 'Class.method' (or a top-level function name)
+        4. short name: 'method'"""
+        name = name.strip().strip("`()").strip()
         if name in self.by_id:
             return [self.by_id[name]]
+        if "::" in name:
+            path, _, rest = name.partition("::")
+            qual = ".".join(p.split("[", 1)[0] for p in rest.split("::") if p)
+            hits = self._by_path_qual(path, qual) if qual else []
+            if hits:
+                return hits
+            name = qual or name
+        if "." in name:
+            hits = self.resolve_dotted(name)
+            if hits:
+                return hits
         if name in self.by_qual:
             return list(self.by_qual[name])
         return list(self.by_short.get(name.split(".")[-1], []))
