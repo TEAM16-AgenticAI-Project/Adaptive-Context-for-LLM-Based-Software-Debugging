@@ -153,10 +153,10 @@ def summarize(rows: list) -> dict:
     return summary
 
 
-def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=False) -> dict:
+def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=False, repo_root=None) -> dict:
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
-    cases = load_cases(manifest)
+    cases = load_cases(manifest, root=repo_root)
     if len({c.id for c in cases}) != len(cases):
         raise ValueError("case IDs must be unique")
     rows = []
@@ -171,7 +171,7 @@ def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=
     directory = Path(out)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "audit.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-    summary = {"revision": revision(), "manifest": manifest,
+    summary = {"revision": revision(), "manifest": manifest, "repo_root": repo_root,
                "manifest_sha256": hashlib.sha256(Path(manifest).read_bytes()).hexdigest(),
                "python": platform.python_version(), "llm_calls": 0,
                "deduplicated": deduplicate,
@@ -192,10 +192,12 @@ def main(argv=None):
     parser.add_argument("--out", default="results/deep/audit")
     parser.add_argument("--chroma", action="store_true", help="also measure the actual optional ChromaRetriever")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--repo-root", help="resolve repo paths here while retaining the original manifest's bug reports")
     parser.add_argument("--deduplicate-chunks", dest="deduplicate", action="store_true",
                         help="explicit comparison variant: keep last definition per ID for BOTH rankers")
     args = parser.parse_args(argv)
-    result = run_audit(args.manifest, args.out, chroma=args.chroma, limit=args.limit, deduplicate=args.deduplicate)
+    result = run_audit(args.manifest, args.out, chroma=args.chroma, limit=args.limit,
+                       deduplicate=args.deduplicate, repo_root=args.repo_root)
     print(json.dumps(result, indent=2))
     if result["errors"]:
         raise SystemExit(1)

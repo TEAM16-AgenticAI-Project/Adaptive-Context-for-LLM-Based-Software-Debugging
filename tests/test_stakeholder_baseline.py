@@ -9,6 +9,16 @@ from adaptive_context.cases import RealCase
 SAMPLE = (Path(__file__).parent / "fixtures/stakeholder_summary.txt").read_text()
 
 
+def test_env_file_is_read_as_data_not_executed(tmp_path):
+    file = tmp_path / ".env"
+    file.write_text('# comment\nexport GROQ_API_KEY="test-key"\nOTHER=ignored\n')
+    assert baseline.read_key_file(str(file)) == "test-key"
+    assert baseline.read_key_file(str(tmp_path / "absent")) == ""
+    file.write_text("GROQ_API_KEY=$(touch never-execute)\n")
+    assert baseline.read_key_file(str(file)) == "$(touch never-execute)"
+    assert not (tmp_path / "never-execute").exists()
+
+
 def fixture_case(tmp_path):
     repo = tmp_path / "buggy"
     repo.mkdir()

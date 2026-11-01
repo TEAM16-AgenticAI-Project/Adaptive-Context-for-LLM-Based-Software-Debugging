@@ -114,6 +114,17 @@ def test_controlled_manifest_has_no_labels_inside_repositories(tmp_path):
         assert not list(Path(case.repo).glob("*.patch"))
 
 
+def test_manifest_can_use_exported_repos_without_rewriting_reports(tmp_path):
+    exported = tmp_path / "exports"
+    exported.mkdir()
+    fixture_case(exported)
+    manifest = tmp_path / "cases.jsonl"
+    manifest.write_text(json.dumps({"id": "tiny", "repo": ".", "bug_report": "match",
+                                    "gold": {"functions": ["pkg/a.py::match"]}}) + "\n")
+    result = audit.run_audit(str(manifest), str(tmp_path / "output"), repo_root=str(exported))
+    assert result["processed"] == 1 and result["repo_root"] == str(exported)
+
+
 def test_all_controlled_cases_fail_before_and_pass_after(tmp_path):
     manifest = build(str(tmp_path / "data"))
     originals = {str(p): p.read_bytes() for p in (tmp_path / "data/repos").rglob("*.py")}

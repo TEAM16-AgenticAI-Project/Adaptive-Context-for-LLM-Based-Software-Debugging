@@ -69,6 +69,21 @@ TerminalUI.generate_response = _generate
 '''
 
 
+def read_key_file(path: str) -> str:
+    """Read only GROQ_API_KEY as data; never source or execute an env file."""
+    file = Path(path)
+    if not file.exists():
+        return ""
+    for line in file.read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.strip().removeprefix("export ").partition("=")
+        if separator and name.strip() == "GROQ_API_KEY":
+            value = value.strip()
+            if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+                value = value[1:-1]
+            return value
+    return ""
+
+
 def parse_output(output: str) -> Diagnosis:
     text = _ANSI.sub("", output).replace("**", "")
     text = "\n".join(re.sub(r"^\s*│ ?", "", line).removesuffix("│").rstrip() for line in text.splitlines())
@@ -164,12 +179,12 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
                     "wall_s": time.perf_counter() - started, "metrics": None}
 
 
-def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, **kwargs) -> dict:
+def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, repo_root=None, **kwargs) -> dict:
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
     if sleep < 0:
         raise ValueError("sleep must be nonnegative")
-    cases = load_cases(manifest)
+    cases = load_cases(manifest, root=repo_root)
     if len({c.id for c in cases}) != len(cases):
         raise ValueError("case IDs must be unique")
     directory = Path(out)
@@ -189,7 +204,8 @@ def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, **k
             output.flush()
             print(f"{case.id}: {row['status']}", flush=True)
     measured = [r for r in rows if r["status"] != "not_run"]
-    summary = {"revision": revision(), "manifest": manifest, "planned": len(rows), "measured": len(measured),
+    summary = {"revision": revision(), "manifest": manifest, "repo_root": repo_root,
+               "planned": len(rows), "measured": len(measured),
                "parsed_successful": sum(r["status"] == "ok" for r in rows),
                "not_run": sum(r["status"] == "not_run" for r in rows),
                "errors": sum(r["status"] == "error" for r in rows),
@@ -215,9 +231,16 @@ def main(argv=None):
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--repo-root", help="override the base directory of the manifest's repo paths")
     parser.add_argument("--sleep", type=float, default=0)
     parser.add_argument("--skip-live", action="store_true")
+    parser.add_argument("--env-file", default=".env", help="read GROQ_API_KEY if not already in the environment")
     args = vars(parser.parse_args(argv))
+    env_file = args.pop("env_file")
+    if not args["skip_live"] and not os.environ.get("GROQ_API_KEY"):
+        key = read_key_file(env_file)
+        if key:
+            os.environ["GROQ_API_KEY"] = key
     summary = run(**args)
     print(json.dumps(summary, indent=2))
     if summary["errors"]:
