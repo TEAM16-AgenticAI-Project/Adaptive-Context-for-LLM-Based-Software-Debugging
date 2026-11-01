@@ -88,3 +88,26 @@ def test_lookup_returns_most_specific_tier_not_union():
     r = BM25Retriever(chunk_repo(REPO))
     assert len(r.lookup("pkg.rules.ls_all.match")) == 1
     assert len(r.lookup("pkg/rules/ls_all.py::match")) == 1
+
+
+# ---- import-aware callees ---------------------------------------------------------------------------------------
+def test_import_aware_callees_pick_the_imported_match():
+    files = {**REPO,
+             "pkg/rules/combo.py": ("from . import ls_all\nfrom .git_push import match as gp_match\n\n\n"
+                                    "def run(c):\n    return ls_all.match(c) or gp_match(c)\n"),
+             "pkg/runner.py": ("class Runner:\n    def match(self, c):\n        return c\n\n"
+                               "    def go(self, c):\n        return self.match(c)\n")}
+    r = BM25Retriever(chunk_repo(files))
+    test_x = r.by_id["tests/rules/test_git_push.py::test_x"]
+    assert _ids(r.callees(test_x)) == ["pkg/rules/git_push.py::match"]          # not every `match`
+    assert _ids(r.callees(r.by_id["tests/rules/test_git_push.py::TestPush.test_y"])) == ["pkg/rules/git_push.py::match"]
+    assert sorted(_ids(r.callees(r.by_id["pkg/rules/combo.py::run"]))) == \
+        ["pkg/rules/git_push.py::match", "pkg/rules/ls_all.py::match"]          # relative + module-attribute imports
+    assert _ids(r.callees(r.by_id["pkg/runner.py::Runner.go"])) == ["pkg/runner.py::Runner.match"]   # self.method
+    assert _ids(r.callees(r.by_id["pkg/rules/git_push.py::match"])) == ["pkg/utils.py::for_app"]
+
+
+def test_unresolved_calls_fall_back_to_name_matching():
+    r = BM25Retriever(chunk_repo({**REPO, "pkg/x.py": "def f(cmd):\n    return cmd.match(1)\n"}))
+    got = sorted(_ids(r.callees(r.by_id["pkg/x.py::f"])))
+    assert got == ["pkg/rules/git_push.py::match", "pkg/rules/ls_all.py::match"]

@@ -1,10 +1,13 @@
 """Retrievers. BM25 (pure Python, offline) is the default; Chroma is optional."""
 from __future__ import annotations
 
+import ast
 import math
 import re
+import textwrap
 from collections import Counter, defaultdict
 
+from .chunking import parse_source
 from .models import Chunk
 
 _WORD = re.compile(r"[A-Za-z0-9]+")
@@ -35,6 +38,10 @@ class BM25Retriever:
                 self.inv[term].append((i, tf))
         self.avgdl = (sum(self.dl) / len(self.dl)) if self.dl else 1.0
         self._modules = None
+        self.by_path = defaultdict(list)
+        for c in chunks:
+            self.by_path[c.path].append(c)
+        self._file_imports = {}
 
     def search(self, query: str, k: int, exclude=frozenset()) -> list:
         n = len(self.chunks)
@@ -126,14 +133,106 @@ class BM25Retriever:
             return list(self.by_qual[name])
         return list(self.by_short.get(name.split(".")[-1], []))
 
+    # ---- import-aware call resolution ------------------------------------------------------------------------
+    def imports_of(self, chunk: Chunk) -> dict:
+        """Local name -> dotted target bound by the imports of the chunk's file (from its module chunks) and by
+        imports inside the chunk itself. `from x.y import f as g` binds g -> 'x.y.f'; `import x.y` binds x -> 'x'."""
+        if chunk.path not in self._file_imports:
+            text = "\n".join(c.text for c in self.by_path.get(chunk.path, []) if c.kind == "module")
+            self._file_imports[chunk.path] = _import_bindings(text, chunk.path)
+        own = _import_bindings(chunk.text, chunk.path) if chunk.kind != "module" and "import" in chunk.text else {}
+        return {**self._file_imports[chunk.path], **own} if own else self._file_imports[chunk.path]
+
+    def _name_matches(self, chunk: Chunk, name: str) -> list:
+        return [c for c in self.by_short.get(name.split(".")[-1], []) if c.id != chunk.id and c.kind in _CALLABLE]
+
+    def resolve_call(self, chunk: Chunk, name: str, imports: dict | None = None) -> list:
+        """Candidates for one call made by `chunk`: same-file definition, then the file's imports, then (only if
+        neither applies) every function/method with that short name, as before."""
+        imports = self.imports_of(chunk) if imports is None else imports
+        head, _, rest = name.partition(".")
+        hits = []
+        if rest:
+            if head in ("self", "cls") and chunk.kind == "method" and "." not in rest:
+                own = f"{chunk.path}::{chunk.name.rsplit('.', 1)[0]}.{rest}"
+                hits = [self.by_id[own]] if own in self.by_id else []
+            elif head in imports:
+                hits = self.resolve_dotted(f"{imports[head]}.{rest}")
+        else:
+            same = f"{chunk.path}::{name}"
+            if same in self.by_id:
+                hits = [self.by_id[same]]
+            elif name in imports:
+                hits = self.resolve_dotted(imports[name])
+        hits = [c for c in hits if c.id != chunk.id and c.kind in _CALLABLE]
+        return hits or self._name_matches(chunk, name)
+
+    def call_names(self, chunk: Chunk, imports: dict | None = None) -> list:
+        """The calls of a chunk, one entry per call site form. A bare attribute name (`func` from `z.func()`) is
+        left out when a dotted form covers it, unless it is itself defined in the file or imported."""
+        imports = self.imports_of(chunk) if imports is None else imports
+        tails = {n.rsplit(".", 1)[1] for n in chunk.calls if "." in n}
+        return [n for n in chunk.calls
+                if "." in n or n not in tails or n in imports or f"{chunk.path}::{n}" in self.by_id]
+
     def callees(self, chunk: Chunk) -> list:
         out, seen = [], set()
-        for name in chunk.calls:
-            for c in self.by_short.get(name, []):
-                if c.id != chunk.id and c.id not in seen and c.kind in ("function", "method"):
+        imports = self.imports_of(chunk)
+        for name in self.call_names(chunk, imports):
+            for c in self.resolve_call(chunk, name, imports):
+                if c.id not in seen:
                     seen.add(c.id)
                     out.append(c)
         return out
+
+
+_CALLABLE = ("function", "method")
+
+
+def _import_nodes(text: str) -> list:
+    try:
+        return [n for n in ast.walk(parse_source(textwrap.dedent(text))) if isinstance(n, (ast.Import, ast.ImportFrom))]
+    except (SyntaxError, ValueError):
+        pass
+    nodes, buf = [], []                      # module chunks can hold class headers without bodies: parse per statement
+    for line in text.splitlines():
+        s = line.strip()
+        if not buf and not s.startswith(("import ", "from ")):
+            continue
+        buf.append(s)
+        joined = " ".join(buf)
+        if joined.count("(") > joined.count(")") or s.endswith("\\"):
+            continue
+        try:
+            nodes.extend(n for n in parse_source(joined.replace("\\ ", " ")).body if isinstance(n, (ast.Import, ast.ImportFrom)))
+        except (SyntaxError, ValueError):
+            pass
+        buf = []
+    return nodes
+
+
+def _import_bindings(text: str, path: str) -> dict:
+    pkg = path.split("/")[:-1]          # package of this file; for pkg/__init__.py that is the package itself
+    out = {}
+    for n in _import_nodes(text):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                if a.asname:
+                    out[a.asname] = a.name
+                else:
+                    first = a.name.split(".")[0]
+                    out[first] = first
+            continue
+        if n.level:
+            up = n.level - 1
+            base = pkg[:len(pkg) - up] if up <= len(pkg) else []
+            module = ".".join(base + ([n.module] if n.module else []))
+        else:
+            module = n.module or ""
+        for a in n.names:
+            if a.name != "*" and module:
+                out[a.asname or a.name] = f"{module}.{a.name}"
+    return out
 
 
 class ChromaRetriever(BM25Retriever):
