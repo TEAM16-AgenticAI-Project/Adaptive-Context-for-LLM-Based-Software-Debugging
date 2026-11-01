@@ -142,7 +142,8 @@ def test_tools_and_run_failing_test_in_temp_copy(tmp_path):
 
 
 def test_run_failing_test_on_example(tmp_path):
-    import pathlib, shutil
+    import pathlib
+    import shutil
     from adaptive_context.tools import run_failing_test
     src = pathlib.Path(__file__).parent.parent / "examples" / "payment_bug"
     repo = tmp_path / "payment_bug"

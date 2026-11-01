@@ -2,15 +2,48 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 
-IGNORE = shutil.ignore_patterns(".git", ".venv", "venv", "__pycache__", "node_modules", "*.pyc", ".env")
+IGNORE = shutil.ignore_patterns(".git", ".venv", "venv", "__pycache__", "node_modules", "*.pyc", ".env",
+                                ".pytest_cache", ".chroma")
+SECRET_ENV = ("GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
 
 
-def run_failing_test(repo: str, test_path: str | None = None, timeout: int = 60, tail_lines: int = 40) -> dict:
+def _clean_env(work: str) -> dict:
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": work}
+    for k in SECRET_ENV:
+        env.pop(k, None)                                   # never expose API keys to repo code
+    return env
+
+
+def run_pytest_in(work: str, test_path: str | None = None, timeout: int = 60, tail_lines: int = 40,
+                  python: str | None = None, test_cmd: str | None = None) -> dict:
+    """Run pytest (or an explicit test command such as BugsInPy's `pytest tests/x.py::test_y`) inside `work`.
+
+    `python` selects the interpreter (real repos often need their own environment, e.g. Python 3.8)."""
+    if test_cmd:
+        cmd = shlex.split(test_cmd)
+        if cmd and cmd[0] in ("pytest", "py.test"):
+            cmd = [python or sys.executable, "-m", "pytest", *cmd[1:]]
+    else:
+        cmd = [python or sys.executable, "-m", "pytest", "-x", "-q", "--tb=short", "-p", "no:cacheprovider",
+               *([test_path] if test_path else [])]
+    try:
+        p = subprocess.run(cmd, cwd=work, env=_clean_env(work), capture_output=True, text=True, timeout=timeout)
+        out, code, timed_out = p.stdout + p.stderr, p.returncode, False
+    except subprocess.TimeoutExpired as e:
+        raw = e.stdout or ""
+        out, code, timed_out = (raw.decode(errors="replace") if isinstance(raw, bytes) else raw), -1, True
+    lines = out.strip().splitlines()
+    return {"passed": code == 0, "timed_out": timed_out, "returncode": code, "output": "\n".join(lines[-tail_lines:])}
+
+
+def run_failing_test(repo: str, test_path: str | None = None, timeout: int = 60, tail_lines: int = 40,
+                     python: str | None = None, test_cmd: str | None = None) -> dict:
     """Run one pytest target in a temporary copy of `repo`; return the end of the output (the traceback).
 
     Not a security sandbox: it only protects the original files and bounds run time.
@@ -20,16 +53,9 @@ def run_failing_test(repo: str, test_path: str | None = None, timeout: int = 60,
     work = os.path.join(tmp, "repo")
     try:
         shutil.copytree(repo, work, ignore=IGNORE)
-        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": work}
-        env.pop("GROQ_API_KEY", None)                      # never expose the API key to repo code
-        try:
-            p = subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "--tb=short", *([test_path] if test_path else [])],
-                               cwd=work, env=env, capture_output=True, text=True, timeout=timeout)
-            out, code, timed_out = p.stdout + p.stderr, p.returncode, False
-        except subprocess.TimeoutExpired as e:
-            out, code, timed_out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or ""), -1, True
-        lines = out.strip().splitlines()
-        return {"passed": code == 0, "timed_out": timed_out, "returncode": code, "output": "\n".join(lines[-tail_lines:])}
+        res = run_pytest_in(work, test_path, timeout, tail_lines, python, test_cmd)
+        res["output"] = res["output"].replace(work + os.sep, "").replace(work, ".")
+        return res
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
