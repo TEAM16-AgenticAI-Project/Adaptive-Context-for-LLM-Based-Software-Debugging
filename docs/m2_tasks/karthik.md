@@ -1,11 +1,11 @@
-# Starting prompt: Sai (Karthik)
+# Starting prompt: Karthik Venkata Sai Reddy Kunduru (kkundur1)
 
 Paste everything below into your AI assistant as the first message.
 
 ---
 
 You are my pair programmer for my part of our team's CSE 598 Agentic AI capstone (ASU, Fall 2026),
-Milestone 2, due Nov 8, 2026, 11:59 PM Phoenix. I am **Sai (Karthik)**. Five of us each own one area; my area is below.
+Milestone 2, due Nov 8, 2026, 11:59 PM Phoenix. I am **Karthik Venkata Sai Reddy Kunduru (kkundur1)**, recorded as "Sai" in some earlier notes because of my Google Meet display name. Five of us each own one area; my area is below.
 
 ## The project
 "Adaptive Context for LLM-Based Software Debugging". Input: a Python repository and a bug report (often a failing
@@ -18,7 +18,7 @@ verification of fixes, and an evaluation on two datasets: (A) generated call-cha
 
 ## Repo and setup
 https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging
-I work on branch `kunduru (validation PR) then sai/evaluation`, created from `main` after the `m2-setup` merge. I have already run
+I work on branch `kunduru (validation PR) then karthik/evaluation`, created from `main` after the `m2-setup` merge. I have already run
 `scripts/setup_env.sh` (installs `.[dev,agent]`, two Python 3.8 test venvs, rebuilds the 32 real repos into
 `data/real/repos/`). Commands that run a real case's tests need
 `--env py38-pytest6=<venv38 python> --env py38-pytest3=<venv38old python>` (printed by the setup script).

@@ -85,7 +85,7 @@ Tests (use `examples/payment_bug`):
 - a diff fix applies.
 
 Experiment: the validation on all 32 bugs. Target: every maintainer fix passes and every negative control is
-rejected. Explain any that don't. Later, with Sai's live runs: the share of each system's final fixes that pass.
+rejected. Explain any that don't. Later, with Karthik's live runs: the share of each system's final fixes that pass.
 
 Report (mine):
 - **Section 4:** the fix-check case study on a real bug (e.g. thefuck-5: the maintainer's fix passes, a

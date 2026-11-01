@@ -13,7 +13,7 @@ Your personal prompt is in this folder: paste it into your AI assistant as the f
 | **Prem** | LangGraph agent + tools as function calls | `agent_graph.py`, `llm.py`, `tools.py` (Tools class), `cli.py` | Live gpt-oss-20b demo traces on 3 real bugs | Sec. 1 (meeting lead + notes), Sec. 2 |
 | **Yadnesh** | Context manager | `budget.py`, `compress.py`, `sequencing.py`, `chunking.py`, `retrieval.py`, `adaptive.py` | Budget ablation + name-ambiguity stats | Sec. 5 (failure 1), ablation table |
 | **Tanay** | Verification (fix check) | `fixcheck.py`, `bench/audit.py --validate-fixcheck` | Fix-check validation on all 32 gold fixes | Sec. 4 (fix-check case), Sec. 5 (failure 2), slides |
-| **Sai** | Evaluation harness + live results | `baseline.py`, `bench/systems.py`, `bench/run_cases.py`, `bench/run.py`, `scripts/run_m2_eval.sh` | All synthetic + live runs, root-cause audit | Sec. 3 (results, analysis), report assembly |
+| **Karthik Kunduru** | Evaluation harness + live results | `baseline.py`, `bench/systems.py`, `bench/run_cases.py`, `bench/run.py`, `scripts/run_m2_eval.sh` | All synthetic + live runs, root-cause audit | Sec. 3 (results, analysis), report assembly |
 | **Deep** | Datasets + baselines | `bench/audit.py --audit`, `bench/stakeholder_baseline.py`, new case manifests | Evidence audit, third baseline, BM25 vs Chroma | Sec. 3.1 (datasets, baselines), Sec. 6, Sec. 7 table |
 
 ## Setup (everyone, once)
@@ -54,7 +54,7 @@ real case's tests needs them.
 | Packing | Yadnesh | `pack(scored, max_tokens, focus=(), allow_compress=True, pinned=frozenset()) -> PackResult(items, dropped, tokens, over_budget, dropped_pinned)`; `code_budget(total, *prompt_parts)` |
 | LLM | Prem | `complete(system, user) -> LLMReply`; `chat(messages, tools=None, tool_choice=None) -> LLMReply` with `tool_calls: list[ToolCall(name, arguments, id)]` |
 | Tools | Prem | `Tools.execute(name, args, exclude=frozenset()) -> ToolResult(ok, summary, chunks, pin, text)` |
-| Systems | Sai | `make_system(name, retriever, llm, cfg, tools=None, verifier=None)`; names `static_k3`, `static_k10`, `adaptive`, `adaptive_graph`, `agent`, `agent_verify` |
+| Systems | Karthik Kunduru | `make_system(name, retriever, llm, cfg, tools=None, verifier=None)`; names `static_k3`, `static_k10`, `adaptive`, `adaptive_graph`, `agent`, `agent_verify` |
 | Case manifest | setup | `cases.py` (`RealCase`, `load_cases`, `score_diagnosis`) |
 
 Until a dependency lands, code against the interface with a small stub or fake in your tests.
@@ -62,10 +62,10 @@ Until a dependency lands, code against the interface with a small stub or fake i
 ## Merge order
 
 1. `m2-setup` (this branch).
-2. Sai's `kunduru` (action validation), as his own PR.
+2. Karthik's `kunduru` (action validation), as his own PR.
 3. Yadnesh, Tanay and Deep: independent PRs.
 4. Prem's agent: real-repo behaviour needs Yadnesh's lookup.
-5. Sai wires every system into the runners.
+5. Karthik wires every system into the runners.
 6. Full evaluation reruns once on the merged `main`. Every number in the report comes from that run.
 
 ## Dates
@@ -75,7 +75,7 @@ Until a dependency lands, code against the interface with a small stub or fake i
 | Nov 1 to 3 | Build your area on your branch; first PR by Nov 3 |
 | Nov 3 to 4 | Stakeholder meeting with the running system (Prem leads; everyone demos their part) |
 | Nov 5 to 6 | Merge, full evaluation on `main`, screenshots |
-| Nov 7 | Report sections in; Sai assembles; Tanay finishes slides |
+| Nov 7 | Report sections in; Karthik assembles; Tanay finishes slides |
 | Nov 8 | Freeze the commit, record it in Section 7, submit |
 
 ## Rules
