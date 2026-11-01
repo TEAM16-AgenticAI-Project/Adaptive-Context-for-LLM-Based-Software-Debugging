@@ -3,3 +3,6 @@
 __pycache__/
 *.egg-info/
 results/
+
+# third-party repositories exported for real-bug cases (rebuild with bench.bugsinpy)
+data/real/repos/

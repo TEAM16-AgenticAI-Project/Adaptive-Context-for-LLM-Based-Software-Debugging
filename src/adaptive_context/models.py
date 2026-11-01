@@ -35,13 +35,21 @@ class RunStats:
     retrieval_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
-    latency_s: float = 0.0
+    latency_s: float = 0.0     # time spent inside LLM calls (as reported by the client)
     rounds: int = 0
-    failures: int = 0          # unparseable replies / LLM errors
+    failures: int = 0          # unparseable replies / LLM errors / invalid tool calls
+    tool_calls: int = 0        # tool executions requested by the model (agent mode)
+    wall_s: float = 0.0        # measured end-to-end time of `run()` (perf_counter)
+    over_budget_rounds: int = 0
 
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+
+# Why a run stopped. Every debugger sets exactly one of these.
+STOP_REASONS = ("diagnosed", "forced_diagnosis", "round_limit", "invalid_exhausted", "llm_error",
+                "verified", "verify_failed")
 
 
 @dataclass
@@ -50,3 +58,5 @@ class DebugResult:
     stats: RunStats
     context_items: list = field(default_factory=list)   # [(chunk_id, level)] in the last prompt
     trace: list = field(default_factory=list)           # one dict per round
+    stop_reason: str = ""
+    verification: dict = field(default_factory=dict)    # fix check result, when one was run
