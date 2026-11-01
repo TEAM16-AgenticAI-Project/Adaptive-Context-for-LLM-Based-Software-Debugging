@@ -1,6 +1,15 @@
 """Context manager: chunking, lookup, import-aware callees, budget packing, notes, adaptive loop bookkeeping."""
+import json
 import warnings
 
+import pytest
+
+from adaptive_context.adaptive import AdaptiveDebugger
+from adaptive_context.bench.generate import GenParams, generate_case
+from adaptive_context.llm import LLMError, LLMReply
+from adaptive_context.models import STOP_REASONS
+from adaptive_context.protocol import SYSTEM_ADAPTIVE
+from adaptive_context.sim import SimulatedLLM
 from adaptive_context.budget import HEADER_TOKENS, code_budget, pack
 from adaptive_context.chunking import chunk_repo, chunk_source
 from adaptive_context.compress import LEVELS, NOTE, compress
@@ -193,3 +202,76 @@ def test_notes_replace_evicted_pinned_code():
     assert chunks[0].id in plain.dropped                  # without notes it is gone
     tiny = pack(scored, one + 5, pinned=pinned, notes=True)
     assert [p.chunk.id for p in tiny.items][0] == chunks[2].id and tiny.items[0].level <= 1   # newest stays code
+
+
+# ---- adaptive loop ----------------------------------------------------------------------------------------------
+class _ScriptLLM:
+    """Replays fixed replies (strings) or raises LLMError; records every prompt."""
+
+    def __init__(self, *replies):
+        self.replies, self.prompts = list(replies), []
+
+    def complete(self, system, user):
+        self.prompts.append(system + user)
+        r = self.replies.pop(0) if self.replies else self.replies_last
+        self.replies_last = r
+        if r is LLMError:
+            raise LLMError("boom")
+        return LLMReply(r, count_tokens(system + user), 10, 0.1)
+
+
+DIAG = '{"action":"diagnose","file":"pkg/utils.py","function":"for_app","cause":"c","fix":"","confidence":"high"}'
+
+
+def _req(*names):
+    return json.dumps({"action": "request", "symbols": list(names), "queries": []})
+
+
+def _dbg(llm, **kw):
+    return AdaptiveDebugger(BM25Retriever(chunk_repo(REPO)), llm, **kw)
+
+
+def test_adaptive_validates_arguments():
+    for kw in ({"token_budget": 0}, {"max_rounds": 0}, {"initial_k": -1}, {"per_round_k": 0},
+               {"prefetch_depth": -1}, {"pin_policy": "x"}, {"budget_scope": "x"}, {"token_budget": 1.5}):
+        with pytest.raises(ValueError):
+            _dbg(_ScriptLLM(DIAG), **kw)
+
+
+def test_adaptive_stop_reasons_and_wall_time():
+    r = _dbg(_ScriptLLM(DIAG)).run("for_app breaks")
+    assert r.stop_reason == "diagnosed" and r.diagnosis.valid and r.stats.wall_s > 0
+    r = _dbg(_ScriptLLM(_req("for_app"), _req("for_app"), DIAG), max_rounds=4).run("qqq")
+    assert r.stop_reason == "forced_diagnosis" and r.stats.rounds == 3   # 2nd request: already shown in full
+    assert [t["allowed"] for t in r.trace][-1] == "diagnose"
+    r = _dbg(_ScriptLLM(_req("pkg.rules.git_push.match"), DIAG), max_rounds=2).run("x")
+    assert r.stop_reason == "forced_diagnosis"            # last round
+    assert _dbg(_ScriptLLM(_req("a"), _req("b")), max_rounds=2).run("x").stop_reason == "round_limit"
+    assert _dbg(_ScriptLLM("nonsense"), max_rounds=3).run("x").stop_reason == "invalid_exhausted"
+    r = _dbg(_ScriptLLM(LLMError)).run("x")
+    assert r.stop_reason == "llm_error" and r.stats.failures == 1
+    assert all(s in STOP_REASONS for s in ("diagnosed", "forced_diagnosis", "round_limit", "invalid_exhausted", "llm_error"))
+
+
+def test_adaptive_prompt_budget_counts_system_and_report():
+    case = generate_case(11)
+    retr = BM25Retriever(chunk_repo(case.files))
+    llm = SimulatedLLM()
+    res = AdaptiveDebugger(retr, llm, token_budget=900, prefetch_depth=2).run(case.bug_report)
+    assert all(t["prompt_tokens"] <= 900 for t in res.trace) and res.stats.over_budget_rounds == 0
+    assert all(t["code_budget"] < 900 - count_tokens(SYSTEM_ADAPTIVE) for t in res.trace)
+    old = AdaptiveDebugger(retr, llm, token_budget=900, prefetch_depth=2, budget_scope="code").run(case.bug_report)
+    assert max(t["prompt_tokens"] for t in old.trace) > 900          # code-only budget overruns the real prompt
+    tiny = AdaptiveDebugger(retr, llm, token_budget=250).run(case.bug_report)
+    assert tiny.stats.over_budget_rounds == tiny.stats.rounds         # overhead alone exceeds the budget: reported
+
+
+def test_adaptive_keeps_requested_code_readable():
+    p = GenParams()
+    deep = next(generate_case(s, p) for s in range(200) if generate_case(s, p).truth.depth >= 3)
+    retr = BM25Retriever(chunk_repo(deep.files))
+    res = AdaptiveDebugger(retr, SimulatedLLM(), token_budget=700).run(deep.bug_report)
+    for t in res.trace:
+        pinned_seen = [lvl for cid, lvl in t["items"] if any(cid == r.id for s in sum(
+            (x.get("symbols", []) for x in res.trace if x["round"] < t["round"]), []) for r in retr.lookup(s))]
+        assert all(lvl <= 1 for lvl in pinned_seen)
