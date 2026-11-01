@@ -78,7 +78,7 @@ Tests:
 - the controlled manifest loads, and every case fails before and passes after (gold) when a test runner is
   available.
 
-Experiment: the evidence audit table, the third-baseline row (with Sai's live run), and the retriever
+Experiment: the evidence audit table, the third-baseline row (with Karthik's live run), and the retriever
 comparison. Save everything under `results/`.
 
 Report (mine):
