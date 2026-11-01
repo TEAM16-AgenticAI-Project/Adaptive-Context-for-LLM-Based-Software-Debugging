@@ -73,17 +73,13 @@ def pack(scored: list, max_tokens: int, focus=(), allow_compress: bool = True, p
         total += cost(i) - old
 
     if allow_compress:
-        for target in (1, 2, 3):                           # gentle first, harsh last
-            for i in reversed(range(n)):                   # lowest priority first
+        for target in (1, 2, 3):                           # gentle first, harsh last: everything is trimmed
+            for i in reversed(range(n)):                   # before anything is outlined; lowest priority first
                 if total <= max_tokens:
                     break
-                if not is_pin[i] and levels[i] < target:
-                    lower(i, target)
-        for i in reversed(range(n)):                       # then trim pinned code, oldest first
-            if total <= max_tokens:
-                break
-            if is_pin[i] and levels[i] < PINNED_MAX_LEVEL:
-                lower(i, PINNED_MAX_LEVEL)
+                level = min(target, PINNED_MAX_LEVEL) if is_pin[i] else target
+                if levels[i] < level:
+                    lower(i, level)
     keep, dropped, dropped_pinned = list(range(n)), [], []
 
     def drop_last():

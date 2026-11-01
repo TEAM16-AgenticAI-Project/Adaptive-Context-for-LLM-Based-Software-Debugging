@@ -14,9 +14,12 @@ Pinning (`pin_policy`):
   "pinned" (default)  requested chunks are pinned; newer requests rank higher, so the oldest is dropped first
   "notes"             as "pinned", and evicted pinned code is kept as a two-line note
   "legacy"            the behaviour before Milestone 2: requests share one score and may be compressed to a signature
+With "pinned"/"notes", retrieved functions named in the bug report (anchors) are also kept at 'trimmed' or better,
+ranked below every request, and outlines keep lines that call repository functions.
 """
 from __future__ import annotations
 
+import re
 import time
 
 from .budget import code_budget, pack
@@ -32,6 +35,15 @@ PIN_POLICIES = ("legacy", "pinned", "notes")
 BUDGET_SCOPES = ("prompt", "code")
 CODE_FLOOR = 200
 _REPACK_TRIES = 3
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def anchor_ids(chunks, bug_report: str) -> frozenset:
+    """Retrieved functions that the bug report names (e.g. the failing entry point or a traceback frame).
+    They are protected like requests (never below 'trimmed') but rank below every request, so requests win
+    when something must be dropped. Uses only the model-visible bug report."""
+    words = set(_IDENT.findall(bug_report))
+    return frozenset(c.id for c in chunks if c.kind in ("function", "method") and c.short_name in words)
 
 
 class AdaptiveDebugger:
@@ -61,14 +73,27 @@ class AdaptiveDebugger:
                         nxt.append(callee)
             frontier = nxt
 
-    def _build(self, pool, bug_report, allowed, rnd, note):
+    def _call_focus(self, scored) -> tuple:
+        known = getattr(self.retriever, "by_short", None)
+        if known is None:
+            return ()
+        names = set()
+        for c, _ in scored:
+            names.update(n for n in c.calls if "." not in n and known.get(n))
+        return tuple(sorted(f"{n}(" for n in names))
+
+    def _build(self, pool, bug_report, allowed, rnd, note, anchors=frozenset()):
         """Pack, order and render one round's prompt. Returns (pack result, ordered items, user prompt, code budget)."""
         legacy = self.pin_policy == "legacy"
-        pinned = frozenset() if legacy else frozenset(cid for cid, (_, s) in pool.items() if s >= PIN)
+        pinned = frozenset() if legacy else \
+            frozenset(cid for cid, (_, s) in pool.items() if s >= PIN) | (anchors & set(pool))
         scored = [(c, s) for c, s in pool.values()]
+        # outline keeps the lines that call a repository function, so a compressed chunk still shows where it leads
+        focus = () if legacy else self._call_focus(scored)
 
         def attempt(budget):
-            res = pack(scored, budget, allow_compress=self.compress, pinned=pinned, notes=self.pin_policy == "notes")
+            res = pack(scored, budget, focus=focus, allow_compress=self.compress, pinned=pinned,
+                       notes=self.pin_policy == "notes")
             ordered = order(res.items, self.retriever, self.sequencing)
             user = build_user_prompt(bug_report, render_context(ordered), allowed, rnd, self.max_rounds, note)
             return res, ordered, user
@@ -106,13 +131,14 @@ class AdaptiveDebugger:
             add(c, s)
         if hits and self.prefetch_depth:
             self._prefetch(hits[0][0], self.prefetch_depth, add)
+        anchors = frozenset() if legacy else anchor_ids([c for c, _ in hits], bug_report)
 
         note, forced, diag, last_items = "", False, Diagnosis(), []
         stop, last_invalid = "", False
         for rnd in range(1, self.max_rounds + 1):
             stats.rounds = rnd
             allowed = "diagnose" if (rnd == self.max_rounds or forced) else "request, diagnose"
-            res, ordered, user, budget = self._build(pool, bug_report, allowed, rnd, note)
+            res, ordered, user, budget = self._build(pool, bug_report, allowed, rnd, note, anchors)
             last_items = [(p.chunk.id, p.level) for p in ordered]
             prompt_tokens = count_tokens(SYSTEM_ADAPTIVE) + count_tokens(user)
             over = res.over_budget or (self.budget_scope == "prompt" and prompt_tokens > self.token_budget)

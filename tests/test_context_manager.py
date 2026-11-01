@@ -291,3 +291,27 @@ def test_name_ambiguity_counts_candidates_before_and_after():
     r = BM25Retriever(chunk_repo(REPO))
     test_rows = [(b, a) for b, a, is_test in call_stats(r) if is_test]
     assert test_rows and all(b == 2 and a == 1 for b, a in test_rows)    # two `match` before, the imported one after
+
+
+def test_anchor_named_in_bug_report_stays_readable():
+    from adaptive_context.adaptive import anchor_ids
+    chunks = chunk_repo(REPO)
+    got = anchor_ids(chunks, "`for_app(1)` returns 2; see Cache and match")
+    assert got == {"pkg/utils.py::for_app", "pkg/rules/git_push.py::match", "pkg/rules/ls_all.py::match"}
+    case = generate_case(0)
+    retr = BM25Retriever(chunk_repo(case.files))
+    res = AdaptiveDebugger(retr, SimulatedLLM(), token_budget=600, prefetch_depth=2).run(case.bug_report)
+    entry_ids = [c.id for c in retr.lookup(case.truth.entry)]
+    for t in res.trace:
+        assert all(lvl <= 1 for cid, lvl in t["items"] if cid in entry_ids)
+
+
+def test_outline_keeps_calls_to_repo_functions():
+    case = generate_case(0)
+    retr = BM25Retriever(chunk_repo(case.files))
+    dbg = AdaptiveDebugger(retr, SimulatedLLM(), token_budget=600)
+    entry = retr.lookup(case.truth.entry)[0]
+    callee = case.truth.chain[1]
+    focus = dbg._call_focus([(entry, 1.0)])
+    assert f"{callee}(" in focus and "len(" not in focus
+    assert f"{callee}(x)" in compress(entry, 2, focus) and f"{callee}(x)" not in compress(entry, 2)
