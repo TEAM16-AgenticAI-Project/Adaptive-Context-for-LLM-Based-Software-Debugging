@@ -96,3 +96,4 @@ tests/test_core.py        examples/payment_bug/
 
 Known gaps: the loop requests symbols/queries directly rather than calling `tools.py` through function calling; the pytest-based fix check
 exists only for generated cases (`bench/generate.py:verify_fix`).
+# Adaptive-Context-for-LLM-Based-Software-Debugging
