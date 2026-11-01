@@ -67,12 +67,19 @@ def rank_metrics(hits: list, gold_ids: list) -> dict:
             "top10": [{"id": c.id, "score": float(s)} for c, s in hits[:10]]}
 
 
-def audit_case(case, *, chroma=False, chroma_factory=None) -> dict:
+def audit_case(case, *, chroma=False, chroma_factory=None, deduplicate=False) -> dict:
     repo = Path(case.repo).resolve()
     if not repo.is_dir():
         raise FileNotFoundError(f"Missing case repository: {case.id}; rebuild the dataset first")
     files = load_repo_dir(str(repo))
     chunks = chunk_repo(files)
+    input_count = len(chunks)
+    last = {chunk.id: index for index, chunk in enumerate(chunks)}
+    duplicate_count = len(chunks) - len(last)
+    if deduplicate:
+        # Duplicate Python definitions in older test files share the AST chunk
+        # ID. Keep the last definition, for BOTH rankers, as an explicit variant.
+        chunks = [chunk for index, chunk in enumerate(chunks) if last[chunk.id] == index]
     started = time.perf_counter()
     retriever = BM25Retriever(chunks)
     indexed_s = time.perf_counter() - started
@@ -98,6 +105,7 @@ def audit_case(case, *, chroma=False, chroma_factory=None) -> dict:
     ambiguity = {name: sum(c.kind in ("function", "method") and c.short_name == name for c in chunks)
                  for name in sorted(case.gold_short_names)}
     row = {"case": case.id, "dataset": case.dataset, "status": "ok", "chunks": len(chunks),
+           "input_chunks": input_count, "duplicate_chunks": duplicate_count, "deduplicated": deduplicate,
            "source_files": len(files), "gold_functions": case.gold_functions,
            "gold_indexed": {g: g in retriever.by_id for g in case.gold_functions},
            "retrievers": {"bm25": bm25}, "test_output_available": bool(output.strip()),
@@ -145,7 +153,7 @@ def summarize(rows: list) -> dict:
     return summary
 
 
-def run_audit(manifest: str, out: str, *, chroma=False, limit=None) -> dict:
+def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=False) -> dict:
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
     cases = load_cases(manifest)
@@ -154,7 +162,7 @@ def run_audit(manifest: str, out: str, *, chroma=False, limit=None) -> dict:
     rows = []
     for case in cases[:limit]:
         try:
-            row = audit_case(case, chroma=chroma)
+            row = audit_case(case, chroma=chroma, deduplicate=deduplicate)
         except Exception as error:
             row = {"case": case.id, "dataset": case.dataset, "status": "error",
                    "error": f"{type(error).__name__}: {error}"}
@@ -166,6 +174,8 @@ def run_audit(manifest: str, out: str, *, chroma=False, limit=None) -> dict:
     summary = {"revision": revision(), "manifest": manifest,
                "manifest_sha256": hashlib.sha256(Path(manifest).read_bytes()).hexdigest(),
                "python": platform.python_version(), "llm_calls": 0,
+               "deduplicated": deduplicate,
+               "deduplication_rule": "Keep last AST definition per ID for both rankers" if deduplicate else "None",
                "definitions": {"hit_at_k": "at least one evaluator gold function in first k retrieved chunks",
                    "all_at_k": "all evaluator gold functions in first k chunks",
                    "imports": "direct syntactic imports only; conditional imports counted, transitive imports not inferred",
@@ -182,8 +192,10 @@ def main(argv=None):
     parser.add_argument("--out", default="results/deep/audit")
     parser.add_argument("--chroma", action="store_true", help="also measure the actual optional ChromaRetriever")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--deduplicate-chunks", dest="deduplicate", action="store_true",
+                        help="explicit comparison variant: keep last definition per ID for BOTH rankers")
     args = parser.parse_args(argv)
-    result = run_audit(args.manifest, args.out, chroma=args.chroma, limit=args.limit)
+    result = run_audit(args.manifest, args.out, chroma=args.chroma, limit=args.limit, deduplicate=args.deduplicate)
     print(json.dumps(result, indent=2))
     if result["errors"]:
         raise SystemExit(1)

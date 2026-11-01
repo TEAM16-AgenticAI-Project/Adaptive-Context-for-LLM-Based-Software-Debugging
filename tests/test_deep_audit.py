@@ -47,6 +47,27 @@ def test_labels_never_enter_retrieval_query(tmp_path, monkeypatch):
     assert "LABEL_SENTINEL" not in queries[0]
 
 
+def test_duplicate_definition_variant_applies_to_both_rankers(tmp_path):
+    case = fixture_case(tmp_path)
+    with (tmp_path / "pkg/a.py").open("a") as source:
+        source.write("\ndef match(x):\n    return x + 5\n")
+    seen = []
+
+    class Semantic:
+        def __init__(self, chunks):
+            seen.extend(chunks)
+
+        def search(self, query, count):
+            return [(chunk, 1.0) for chunk in seen][:count]
+
+    row = audit.audit_case(case, chroma=True, chroma_factory=Semantic, deduplicate=True)
+    assert row["duplicate_chunks"] == 1
+    assert row["deduplicated"]
+    assert len(seen) == row["chunks"]
+    assert len({chunk.id for chunk in seen}) == len(seen)
+    assert "+ 5" in next(chunk.text for chunk in seen if chunk.id == "pkg/a.py::match")
+
+
 def test_imports_resolve_relative_and_aliases_without_executing():
     source = "from .rules import chosen as alias\nfrom pkg.rules.target import run\nimport os.path as p\n"
     modules = audit.imported_modules(source, "pkg/test_it.py")
