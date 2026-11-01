@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .compress import compress
+from .compress import NOTE, compress
 from .models import Chunk
 from .tokens import count_tokens
 
@@ -40,7 +40,11 @@ def code_budget(total: int, *prompt_parts: str, floor: int = 200) -> int:
     return max(floor, total - sum(count_tokens(p) for p in prompt_parts if p))
 
 
-def pack(scored: list, max_tokens: int, focus=(), allow_compress: bool = True, pinned=frozenset()) -> PackResult:
+def pack(scored: list, max_tokens: int, focus=(), allow_compress: bool = True, pinned=frozenset(),
+         notes: bool = False) -> PackResult:
+    """`notes=True` (extension A): a pinned chunk that must go is first replaced by a two-line note (level 4) and
+    only dropped if the notes still do not fit. `dropped_pinned` lists pinned ids whose code left the prompt,
+    noted or dropped; `dropped` lists ids that left entirely."""
     pinned = frozenset(pinned)
     n = len(scored)
     # pinned first; then score; ties: pinned later-in-list first (newer), unpinned earlier first (as before)
@@ -81,11 +85,25 @@ def pack(scored: list, max_tokens: int, focus=(), allow_compress: bool = True, p
             if is_pin[i] and levels[i] < PINNED_MAX_LEVEL:
                 lower(i, PINNED_MAX_LEVEL)
     keep, dropped, dropped_pinned = list(range(n)), [], []
-    while total > max_tokens and len(keep) > 1:            # unpinned (lowest first), then pinned (oldest first)
+
+    def drop_last():
+        nonlocal total
         i = keep.pop()
         total -= cost(i)
         dropped.append(items[i][0].id)
-        if is_pin[i]:
+        if is_pin[i] and items[i][0].id not in dropped_pinned:
             dropped_pinned.append(items[i][0].id)
+
+    while total > max_tokens and len(keep) > 1 and not is_pin[keep[-1]]:   # unpinned, lowest first
+        drop_last()
+    if notes:                                              # pinned code -> note, oldest first; the newest stays code
+        for i in reversed(keep[1:]):
+            if total <= max_tokens:
+                break
+            if is_pin[i] and levels[i] < NOTE:
+                lower(i, NOTE)
+                dropped_pinned.append(items[i][0].id)
+    while total > max_tokens and len(keep) > 1:            # then pinned (or their notes), oldest first
+        drop_last()
     packed = [Packed(items[i][0], items[i][1], levels[i], text(i)) for i in keep]
     return PackResult(packed, dropped, total, total > max_tokens, dropped_pinned)

@@ -3,7 +3,7 @@ import warnings
 
 from adaptive_context.budget import HEADER_TOKENS, code_budget, pack
 from adaptive_context.chunking import chunk_repo, chunk_source
-from adaptive_context.compress import compress
+from adaptive_context.compress import LEVELS, NOTE, compress
 from adaptive_context.retrieval import BM25Retriever
 from adaptive_context.tokens import count_tokens
 
@@ -165,3 +165,31 @@ def test_oversized_single_chunk_sets_over_budget():
     assert not pack([(c, 1.0)], 10_000).over_budget
     pin = pack([(c, 1.0)], 500, pinned={c.id})            # pinned stays trimmed (~2k tokens), so it overruns
     assert pin.items[0].level == 1 and pin.over_budget and pin.tokens > 500
+
+
+# ---- notes for evicted code -------------------------------------------------------------------------------------
+def test_note_keeps_signature_docstring_calls_and_returns():
+    c = _fn("compute", 10)
+    txt = compress(c, NOTE)
+    assert LEVELS[NOTE] == "note" and len(txt.splitlines()) == 2
+    assert txt.startswith("def compute(x):")
+    assert "Add 3 to the input." in txt and "return y + 3" in txt and "helper()" in txt
+    assert "v3 = " not in txt and count_tokens(txt) < count_tokens(compress(c, 3)) + 30
+
+
+def test_notes_replace_evicted_pinned_code():
+    chunks = [_fn(f"f{i}", 30) for i in range(4)]
+    one = count_tokens(compress(chunks[0], 1)) + HEADER_TOKENS
+    pinned = {c.id for c in chunks[:3]}
+    scored = [(chunks[3], 5.0)] + [(c, 1e6 + k) for k, c in enumerate(chunks[:3])]
+    budget = 2 * one + count_tokens(compress(chunks[0], NOTE)) + HEADER_TOKENS
+    res = pack(scored, budget, pinned=pinned, notes=True)
+    lv = {p.chunk.id: p.level for p in res.items}
+    assert chunks[3].id in res.dropped                    # unpinned still goes first
+    assert lv[chunks[0].id] == NOTE                       # oldest request kept as a note, not dropped
+    assert lv[chunks[2].id] <= 1 and lv[chunks[1].id] <= 1
+    assert res.dropped_pinned == [chunks[0].id] and not res.over_budget
+    plain = pack(scored, budget, pinned=pinned)
+    assert chunks[0].id in plain.dropped                  # without notes it is gone
+    tiny = pack(scored, one + 5, pinned=pinned, notes=True)
+    assert [p.chunk.id for p in tiny.items][0] == chunks[2].id and tiny.items[0].level <= 1   # newest stays code
