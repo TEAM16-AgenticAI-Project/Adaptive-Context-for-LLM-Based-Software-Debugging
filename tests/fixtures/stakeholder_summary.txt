@@ -1,0 +1,15 @@
+Evidence considered:
+- checkout currently returns the undiscounted price.
+
+Conclusion:
+The caller discards the helper's return value.
+
+Relevant file:
+payment.py
+
+Suggested change:
+def checkout(price):
+    return price * 0.8
+
+Explanation:
+Returning the calculated amount changes the caller's result.
