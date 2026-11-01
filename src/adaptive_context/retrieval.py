@@ -143,7 +143,7 @@ class BM25Retriever:
         own = _import_bindings(chunk.text, chunk.path) if chunk.kind != "module" and "import" in chunk.text else {}
         return {**self._file_imports[chunk.path], **own} if own else self._file_imports[chunk.path]
 
-    def _name_matches(self, chunk: Chunk, name: str) -> list:
+    def name_matches(self, chunk: Chunk, name: str) -> list:
         return [c for c in self.by_short.get(name.split(".")[-1], []) if c.id != chunk.id and c.kind in _CALLABLE]
 
     def resolve_call(self, chunk: Chunk, name: str, imports: dict | None = None) -> list:
@@ -165,7 +165,7 @@ class BM25Retriever:
             elif name in imports:
                 hits = self.resolve_dotted(imports[name])
         hits = [c for c in hits if c.id != chunk.id and c.kind in _CALLABLE]
-        return hits or self._name_matches(chunk, name)
+        return hits or self.name_matches(chunk, name)
 
     def call_names(self, chunk: Chunk, imports: dict | None = None) -> list:
         """The calls of a chunk, one entry per call site form. A bare attribute name (`func` from `z.func()`) is

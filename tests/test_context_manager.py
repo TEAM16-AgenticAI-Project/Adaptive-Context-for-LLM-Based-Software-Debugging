@@ -275,3 +275,19 @@ def test_adaptive_keeps_requested_code_readable():
         pinned_seen = [lvl for cid, lvl in t["items"] if any(cid == r.id for s in sum(
             (x.get("symbols", []) for x in res.trace if x["round"] < t["round"]), []) for r in retr.lookup(s))]
         assert all(lvl <= 1 for lvl in pinned_seen)
+
+
+# ---- bench scripts (smoke) --------------------------------------------------------------------------------------
+def test_budget_ablation_smoke():
+    from adaptive_context.bench.budget_ablation import ARMS, _work, summarize
+    rows = [_work((s, [600], GenParams(n_modules=10, n_distractor_chains=5), 6)) for s in range(3)]
+    table = summarize(rows, [600])
+    assert len(table) == len(ARMS) * 2
+    assert all(sum(m["stop_reasons"].values()) == 3 for m in table.values())
+
+
+def test_name_ambiguity_counts_candidates_before_and_after():
+    from adaptive_context.bench.name_ambiguity import call_stats
+    r = BM25Retriever(chunk_repo(REPO))
+    test_rows = [(b, a) for b, a, is_test in call_stats(r) if is_test]
+    assert test_rows and all(b == 2 and a == 1 for b, a in test_rows)    # two `match` before, the imported one after
