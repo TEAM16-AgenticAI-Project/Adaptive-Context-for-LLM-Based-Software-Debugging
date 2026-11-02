@@ -1,0 +1,9 @@
+{
+  "source_revision": "be0b26bb89589e95ed8f7b7612bfd46309e80a06",
+  "tests": 89,
+  "pytest": "python -m pytest -q",
+  "ruff": "ruff check src tests",
+  "live_groq": "not_run: no authenticated account/API key available",
+  "interface_changes": "None; optional dataset-root arguments are additive",
+  "lint_prerequisite": "Removed one pre-existing unused import in bench/contributions.py."
+}
