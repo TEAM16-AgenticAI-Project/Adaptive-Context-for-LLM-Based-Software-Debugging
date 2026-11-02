@@ -1,0 +1,20 @@
+{
+  "revision": "b8e5ec09b3c8149037f02c70aeae35e0218a5937",
+  "manifest": "data/real/thefuck.jsonl",
+  "planned": 32,
+  "measured": 0,
+  "parsed_successful": 0,
+  "not_run": 32,
+  "errors": 0,
+  "metrics": null,
+  "conditions": {
+    "reference": "Original Chroma + 80-line windows + Top-3 + one model call",
+    "max_tokens": 4096,
+    "default_before_override": 512,
+    "capture": "Original response and selected windows; presentation animation bypassed",
+    "grounding": "Complete AST function must fit in a selected window",
+    "denominator": "All attempted executions, including process/parse failures; not_run rows excluded",
+    "reviewed_upstream_revision": "c545608474b62e5635d240c49a790703e687848e",
+    "fairness": "Separate reference; not matched to team chunking/prompts/retriever. No fabricated usage."
+  }
+}
