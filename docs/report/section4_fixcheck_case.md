@@ -1,8 +1,8 @@
 # Section 4, demo: checking a fix on a real bug (draft, Tanay)
 
 No LLM is involved in this section. Every number comes from real test runs on dataset B (BugsInPy/thefuck),
-produced at a clean commit: `results/fixcheck_validation.{json,jsonl,md}` (commit `4922e07`) and
-`results/fixcheck_case_thefuck-5.{json,txt}` (commit `4775946`).
+produced at a clean commit: `results/fixcheck_validation.{json,jsonl,md}` (commit `ea5365d`) and
+`results/fixcheck_case_thefuck-5.{json,txt}` (commit `95bd786`).
 
 Reproduce (after `scripts/setup_env.sh`):
 

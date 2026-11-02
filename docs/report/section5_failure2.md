@@ -1,7 +1,7 @@
 # Section 5, Failure 2: a passing test does not prove a correct fix (draft, Tanay)
 
-Sources: `results/fixcheck_case_thefuck-5.{json,txt}` (commit `4775946`) and `results/fixcheck_validation.jsonl`
-(commit `4922e07`). These come from real test runs on dataset B, with no LLM.
+Sources: `results/fixcheck_case_thefuck-5.{json,txt}` (commit `95bd786`) and `results/fixcheck_validation.jsonl`
+(commit `ea5365d`). These come from real test runs on dataset B, with no LLM.
 
 ## What went wrong
 
