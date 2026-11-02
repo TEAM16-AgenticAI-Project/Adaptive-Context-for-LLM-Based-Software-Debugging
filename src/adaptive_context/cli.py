@@ -13,12 +13,10 @@ import json
 import sys
 import warnings
 
-from .adaptive import AdaptiveDebugger
-from .baseline import StaticRAG
+from .bench.systems import make_system
 from .chunking import chunk_repo, load_repo_dir
-from .llm import GroqLLM, LLMError
+from .llm import LLMError, make_llm
 from .retrieval import BM25Retriever, ChromaRetriever
-from .sim import SimulatedLLM
 from .tools import Tools, run_failing_test, with_failure_output
 
 
@@ -57,33 +55,31 @@ def _debug(a) -> int:
         return 2
     chunks = chunk_repo(files)
     retr = ChromaRetriever(chunks) if a.retriever == "chroma" else BM25Retriever(chunks)
+    agentic = a.mode in ("agent", "agent_verify")
     try:
-        llm = SimulatedLLM() if a.llm == "sim" else GroqLLM(model=a.model, reasoning_effort=a.reasoning_effort,
-                                                            max_tokens=a.max_tokens)
+        llm = make_llm(a.llm, model=a.model, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens,
+                       tools=agentic)
     except LLMError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    if a.mode == "baseline":
-        system = StaticRAG(retr, llm, a.top_k)
-    elif a.mode == "adaptive":
-        system = AdaptiveDebugger(retr, llm, initial_k=a.top_k, max_rounds=a.rounds, token_budget=a.budget,
-                                  prefetch_depth=a.prefetch)
-    else:
-        from .agent_graph import LangGraphAgent, SimToolLLM
-        if a.llm == "sim":
-            llm = SimToolLLM(llm)
+    cfg = {"top_k": a.top_k, "rounds": a.rounds, "budget": a.budget, "prefetch_depth": a.prefetch,
+           "max_verify": a.max_verify, "time_limit": a.time_limit or None}
+    name = {"baseline": "static_k3", "adaptive": "adaptive_graph" if a.prefetch else "adaptive"}.get(a.mode, a.mode)
+    tools = verifier = None
+    if agentic:
         tools = Tools(retr, a.repo, test_path=a.run_test, python=a.python, test_cmd=test_cmd)
-        verifier = None
-        if a.mode == "agent_verify":
-            if not (a.run_test or test_cmd):
-                print("--mode agent_verify needs --run-test or --case (the regression test to rerun)", file=sys.stderr)
-                return 2
-            # multi-location check (fix + other_changes, any file) with related tests; see multifix.py
-            from .multifix import TestOracle
-            verifier = TestOracle(a.repo, python=a.python, test_cmd=test_cmd, test_path=a.run_test).check
-        system = LangGraphAgent(retr, llm, tools=tools, initial_k=a.top_k, max_rounds=a.rounds,
-                                token_budget=a.budget, verifier=verifier, max_verify=a.max_verify,
-                                time_limit=a.time_limit or None)
+    if a.mode == "agent_verify":
+        if not (a.run_test or test_cmd):
+            print("--mode agent_verify needs --run-test or --case (the regression test to rerun)", file=sys.stderr)
+            return 2
+        # multi-location check (fix + other_changes, any file) with related tests; see multifix.py
+        from .multifix import TestOracle
+        verifier = TestOracle(a.repo, python=a.python, test_cmd=test_cmd, test_path=a.run_test).check
+    try:
+        system = make_system(name, retr, llm, cfg, tools=tools, verifier=verifier)
+    except RuntimeError as e:                              # agent modes without langgraph
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     res = system.run(report)
     print(json.dumps({"diagnosis": vars(res.diagnosis), "stop_reason": res.stop_reason,
                       "stats": {**vars(res.stats), "total_tokens": res.stats.total_tokens},

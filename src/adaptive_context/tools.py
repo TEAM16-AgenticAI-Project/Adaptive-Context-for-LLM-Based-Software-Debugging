@@ -9,6 +9,7 @@ That is not a security sandbox: only run tests from repositories you trust.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -115,6 +116,26 @@ def _kill_group(p) -> None:
             pass
 
 
+@contextlib.contextmanager
+def temp_repo(repo: str, prefix: str = "adaptive_"):
+    """A throwaway copy of `repo` for running or patching its code; yields the copy's path, removed afterwards.
+
+    Skips git metadata, virtualenvs and caches (IGNORE) and keeps symlinks as links, so dangling links in real
+    repositories do not break the copy. Every module that needs a scratch copy uses this one helper."""
+    tmp = tempfile.mkdtemp(prefix=prefix)
+    work = os.path.join(tmp, "repo")
+    try:
+        shutil.copytree(repo, work, ignore=IGNORE, symlinks=True)
+        yield work
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def scrub_paths(output: str, work: str) -> str:
+    """Hide the temporary copy's location in test output."""
+    return output.replace(work + os.sep, "").replace(work, ".")
+
+
 def run_failing_test(repo: str, test_path: str | None = None, timeout: int = 60, tail_lines: int = 40,
                      python: str | None = None, test_cmd: str | None = None) -> dict:
     """Run one pytest target in a temporary copy of `repo`; return the end of the output (the traceback).
@@ -122,15 +143,10 @@ def run_failing_test(repo: str, test_path: str | None = None, timeout: int = 60,
     Not a security sandbox: it only protects the original files and bounds run time.
     Only run tests from repositories you trust.
     """
-    tmp = tempfile.mkdtemp(prefix="adaptive_ctx_")
-    work = os.path.join(tmp, "repo")
-    try:
-        shutil.copytree(repo, work, ignore=IGNORE, symlinks=True)   # keep (possibly dangling) links
+    with temp_repo(repo, "adaptive_ctx_") as work:
         res = run_pytest_in(work, test_path, timeout, tail_lines, python, test_cmd)
-        res["output"] = res["output"].replace(work + os.sep, "").replace(work, ".")
+        res["output"] = scrub_paths(res["output"], work)
         return res
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 _WARN_START = re.compile(r"^=+ warnings summary =+$")

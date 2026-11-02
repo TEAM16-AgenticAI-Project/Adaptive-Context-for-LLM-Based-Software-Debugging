@@ -7,11 +7,13 @@ evaluation runner can score them the same way. The names are fixed by the team p
     static_k10      Static RAG with a wider Top-10 (a second, wider baseline)
     adaptive        Adaptive loop, bounded rounds, compression, ordering, token budget
     adaptive_graph  Adaptive loop plus call-graph prefetch (callees of requested symbols)
-    agent           LangGraph agent with tools (imported lazily; needs the agent module)
-    agent_verify    The agent plus fix verification after it proposes a change
+    agent           LangGraph agent with tools (agent_graph.LangGraphAgent; needs langgraph)
+    agent_verify    The agent plus fix verification after it proposes a change (pass a verifier, e.g.
+                    multifix.TestOracle(...).check or a fixcheck.check_fix wrapper)
 
-The static and adaptive systems are always available. The agent systems are imported
-lazily so this module, and every other system, work before the agent module has landed.
+The static and adaptive systems are always available. The agent systems need langgraph; without it
+make_system raises RuntimeError so a runner can skip them. This is the one place systems are built:
+the CLI and the evaluation scripts call it too.
 """
 from __future__ import annotations
 
@@ -33,6 +35,8 @@ def _default_cfg() -> dict:
         "rounds": 6,
         "prefetch_depth": 2,
         "budget_scope": "prompt",
+        "max_verify": 3,        # agent_verify: failed fix checks the agent may repair
+        "time_limit": None,     # agent systems: seconds for one run (None = no limit)
     }
 
 
@@ -61,16 +65,16 @@ def make_system(name: str, retriever, llm, cfg: dict | None = None, tools=None, 
                                 token_budget=c["budget"], prefetch_depth=c["prefetch_depth"],
                                 budget_scope=c["budget_scope"])
 
-    # Agent systems: import lazily so the rest of this module works without the agent.
+    # Agent systems: langgraph is optional, so a missing install becomes a clear RuntimeError.
     if name in ("agent", "agent_verify"):
-        try:
-            from ..agent import AgentDebugger
-        except ImportError as exc:  # the agent module (or langgraph) is not available yet
-            raise RuntimeError(
-                f"system '{name}' needs the agent module, which is not available: {exc}") from exc
+        from ..agent_graph import LangGraphAgent
         use_verifier = verifier if name == "agent_verify" else None
-        return AgentDebugger(retriever, llm, tools=tools, verifier=use_verifier,
-                             max_rounds=c["rounds"], token_budget=c["budget"])
+        try:
+            return LangGraphAgent(retriever, llm, tools=tools, verifier=use_verifier, initial_k=c["top_k"],
+                                  max_rounds=c["rounds"], token_budget=c["budget"], max_verify=c["max_verify"],
+                                  time_limit=c["time_limit"])
+        except ImportError as exc:  # langgraph is not installed
+            raise RuntimeError(f"system '{name}' needs langgraph: {exc}") from exc
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -83,7 +87,7 @@ def available_systems(include_agent: bool = True) -> list:
     names = [n for n in SYSTEM_NAMES if n not in ("agent", "agent_verify")]
     if include_agent:
         try:
-            from .. import agent  # noqa: F401  (probe only)
+            import langgraph  # noqa: F401  (probe only: the agent systems need it)
             names += ["agent", "agent_verify"]
         except ImportError:
             pass

@@ -83,11 +83,15 @@ def test_replace_edits_change_only_the_given_lines(shells):
 
 def test_apply_edits_reports_problems(shells):
     res = apply_edits(shells, [Edit("nope.py", "f", "def f():\n    pass\n"),
-                               Edit("pkg/zsh.py", "Zsh.app_alias", "return 1"),
+                               Edit("pkg/zsh.py", "Zsh.app_alias", "zzz_unrelated_call(1, 2, 3)"),
+                               Edit("pkg/zsh.py", "Zsh.new_one", "x = 1"),
                                Edit("pkg/zsh.py", "Missing.m", "def m(self):\n    pass\n")])
     assert any("file not found" in p for p in res.problems)
-    assert any("complete new function" in p for p in res.problems)
+    assert any("no similar line" in p for p in res.problems)              # fixcheck's single-line rule
+    assert any("give the complete new function" in p for p in res.problems)
     assert any("class Missing not found" in p for p in res.problems)
+    line = apply_edits(shells, [Edit("pkg/bash.py", "Bash.app_alias", "return 'alias ' + name + \"='fk'\"")])
+    assert line.problems == [] and "\"='fk'\"" in _src(shells, "pkg/bash.py")     # a single corrected line
     bad = apply_edits(shells, [Edit("pkg/util.py", "old_name", "def old_name(s):\n    return (\n")])
     assert any("syntax error" in p or "does not parse" in p for p in bad.problems)
 

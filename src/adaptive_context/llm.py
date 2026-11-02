@@ -165,3 +165,17 @@ class GroqLLM:
         message = (data.get("choices") or [{}])[0].get("message") or {}
         return LLMReply(message.get("content") or "", usage.get("prompt_tokens", 0),
                         usage.get("completion_tokens", 0), latency, _parse_tool_calls(message))
+
+
+def make_llm(kind: str = "groq", *, model: str | None = None, reasoning_effort: str | None = None,
+             max_tokens: int = 2048, tools: bool = False):
+    """The LLM for a run: "groq" (live, needs GROQ_API_KEY) or "sim" (offline simulator). tools=True wraps the
+    simulator for the agent's native tool calls (Groq supports them directly)."""
+    if kind == "sim":
+        from .sim import SimulatedLLM
+        sim = SimulatedLLM()
+        if tools:
+            from .agent_graph import SimToolLLM
+            return SimToolLLM(sim)
+        return sim
+    return GroqLLM(model=model, reasoning_effort=reasoning_effort, max_tokens=max_tokens)

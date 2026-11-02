@@ -87,24 +87,6 @@ except ImportError:
                 and obj.get("confidence") in ("high", "low"))
 
 
-def _code_budget(total: int, *prompt_parts: str) -> int:
-    """Tokens left for code after the prompt overhead. Uses budget.code_budget once the context-manager PR
-    (Yadnesh) lands; until then the same rule is applied here."""
-    fn = getattr(_budget, "code_budget", None)
-    if fn is not None:
-        return fn(total, *prompt_parts)
-    return max(200, total - sum(count_tokens(p) for p in prompt_parts if p))
-
-
-def _pack(scored: list, max_tokens: int, compress: bool, pinned: frozenset):
-    """budget.pack with pinned evidence when supported (context-manager PR); plain packing otherwise.
-    Pinned chunks always carry the highest scores, so they are compressed and dropped last either way."""
-    try:
-        return _budget.pack(scored, max_tokens, allow_compress=compress, pinned=pinned)
-    except TypeError:
-        return _budget.pack(scored, max_tokens, allow_compress=compress)
-
-
 class AgentState(TypedDict, total=False):
     bug_report: str
     pool: dict
@@ -287,8 +269,9 @@ class LangGraphAgent:
         if s["note"]:
             extra += f"\nNOTE: {s['note']}\n"
         header = build_user_prompt(s["bug_report"], "", allowed, rnd, self._limit(s), extra)
-        res = _pack([(c, sc) for c, sc in s["pool"].values()], _code_budget(self.token_budget, SYSTEM_AGENT, header),
-                    self.compress, s["pinned"])
+        res = _budget.pack([(c, sc) for c, sc in s["pool"].values()],
+                           _budget.code_budget(self.token_budget, SYSTEM_AGENT, header),
+                           allow_compress=self.compress, pinned=s["pinned"])
         over = bool(getattr(res, "over_budget", False))
         ordered = order(res.items, self.retriever, self.sequencing)
         prompt = build_user_prompt(s["bug_report"], render_context(ordered), allowed, rnd, self._limit(s), extra)

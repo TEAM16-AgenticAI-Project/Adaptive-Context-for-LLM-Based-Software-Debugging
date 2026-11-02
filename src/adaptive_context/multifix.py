@@ -1,17 +1,18 @@
-"""Apply a fix that spans several functions and files, and check it with the repository's own tests.
+"""Multi-location fixes, checked with the repository's own tests (the agent's repair loop and the multi-file eval).
 
-The LangGraph agent uses this for its test-driven repair loop (`--mode agent_verify`), and
-`bench/multifile_eval.py` uses it to score multi-file bugs. It overlaps with the single-function fix check
-(`fixcheck.check_fix`, verification PR): this module adds what multi-file bugs need:
+Built on `fixcheck` (the single-function fix check): replacing an existing function, imports + a function, a single
+corrected line, and unified diffs all go through `fixcheck`, so a fix means the same thing everywhere. This module
+adds what bugs that span several functions and files need:
 
-* several edits in one patch: replace a function or method, add a new one, or insert module-level code
-  (`<module>`: imports, aliases, constants) after the imports;
+* several edits in one patch, in any file: also new functions and methods, exact-line replacements inside a long
+  function (`old` -> `code`), module-level code (`<module>`: imports, aliases, constants), and renames;
 * a dangling-name check: a function the patch removed or renamed that other files still import or call;
 * related tests: test files that belong to the changed modules, run before and after the patch, so the model
   learns which tests it broke and which tests about the same functions still fail (the same defect in a
   sibling implementation, for example).
 
-Everything runs in a temporary copy with a timeout. That protects the original files; it is not a sandbox.
+Everything runs in a temporary copy (tools.temp_repo) with bounded test runs. That protects the original files;
+it is not a security sandbox.
 """
 from __future__ import annotations
 
@@ -19,27 +20,26 @@ import ast
 import logging
 import os
 import re
-import shutil
-import tempfile
 import textwrap
 from dataclasses import dataclass, field
 
+from .fixcheck import FixError, apply_fix_to_source, check_fix, find_function, is_diff, strip_fences
 from .logs import short
-from .tools import IGNORE, failure_excerpt, run_pytest_in
+from .tools import failure_excerpt, run_pytest_in, scrub_paths, temp_repo
 
 log = logging.getLogger(__name__)
 _NOT_TESTS = re.compile(r"(^|/)(maint|demos?|examples?|docs?|scripts|benchmarks?|\.tox|build|dist)/")
 
 MODULE = "<module>"
-_FENCE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n|\n?\s*```\s*$")
 _FAIL_LINE = re.compile(r"^(FAILED|ERROR|FAIL) (\S+)")
+_DEF = ("def ", "async def ", "@", "class ")
 
 
 @dataclass
 class Edit:
     file: str
     function: str          # 'func', 'Cls.method', or '<module>'
-    code: str              # the complete new function, or (with `old`) the new lines
+    code: str              # the complete new function, a single corrected line, or (with `old`) the new lines
     old: str = ""          # optional: exact current lines inside that function (or file) that `code` replaces
 
 
@@ -51,7 +51,7 @@ class PatchResult:
 
 
 def edits_from_diagnosis(d) -> list:
-    """The primary fix plus every entry of `d.locations` ({file, function, fix})."""
+    """The primary fix plus every entry of `d.locations` ({file, function, fix[, replace]})."""
     out = []
     if getattr(d, "fix", "").strip():
         out.append(Edit(d.file, d.function, d.fix, getattr(d, "replace", "") or ""))
@@ -79,7 +79,7 @@ def _replace_lines(lines: list, lo: int, hi: int, old: str, new: str) -> list | 
             j, k = j + 1, k + 1
         if k == len(want):
             indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
-            block = textwrap.indent(textwrap.dedent(_FENCE.sub("", new.strip("\n"))) + "\n", indent)
+            block = textwrap.indent(textwrap.dedent(strip_fences(new).strip("\n")) + "\n", indent)
             return lines[:i] + block.splitlines(keepends=True) + lines[j:]
     return None
 
@@ -95,7 +95,7 @@ def _parses(src: str) -> bool:
 def clean_code(code: str) -> str:
     """Strip markdown fences and indentation. Repairs the common model output of a flush-left `def` whose body is
     indented inconsistently (e.g. copied from inside a class)."""
-    cand = textwrap.dedent(_FENCE.sub("", code.strip("\n")).rstrip() + "\n")
+    cand = textwrap.dedent(strip_fences(code).strip("\n").rstrip() + "\n")
     if _parses(cand):
         return cand
     lines = cand.splitlines(keepends=True)
@@ -122,17 +122,15 @@ def _repo_file(root: str, path: str) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def _defs(tree) -> dict:
-    """'func' / 'Cls' / 'Cls.method' -> node (top level and one class level)."""
-    out = {}
-    for n in tree.body:
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            out[n.name] = n
-            if isinstance(n, ast.ClassDef):
-                for m in n.body:
-                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        out[f"{n.name}.{m.name}"] = m
-    return out
+def _find_class(tree, qual: str):
+    """The ClassDef for 'A' or 'A.B' (nested), else None."""
+    body, node = tree.body, None
+    for part in qual.split("."):
+        node = next((n for n in body if isinstance(n, ast.ClassDef) and n.name == part), None)
+        if node is None:
+            return None
+        body = node.body
+    return node
 
 
 def _top_names(tree) -> set:
@@ -141,12 +139,16 @@ def _top_names(tree) -> set:
 
 
 def _apply_one(src: str, e: Edit) -> tuple:
-    """Return (new source, problem or '')."""
+    """Return (new source, problem or ''). Replacing an existing function, imports + function, or a single corrected
+    line is fixcheck.apply_fix_to_source (the same rules the single-function fix check uses). This adds what
+    multi-file fixes need: replacing exact lines (`old`), module-level code, new functions and methods, renames."""
     try:
         tree = ast.parse(src)
     except SyntaxError as ex:
         return src, f"{e.file} does not parse before the edit: {ex.msg}"
     lines = src.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
     code = clean_code(e.code)
     name = e.function.strip().split("::")[-1].strip("`() ")
     if name in (MODULE, "<imports>", ""):
@@ -158,37 +160,38 @@ def _apply_one(src: str, e: Edit) -> tuple:
             return src.rstrip("\n") + "\n\n\n" + code, ""
         last_import = max((n.end_lineno for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))), default=0)
         return "".join(lines[:last_import]) + code + "".join(lines[last_import:]), ""
-    defs = _defs(tree)
-    if e.old.strip():                                     # replace a few lines inside the function (or file)
-        node = defs.get(name) or next((v for k, v in defs.items() if k.endswith("." + name)), None)
-        lo, hi = ((node.decorator_list[0].lineno if node.decorator_list else node.lineno) - 1, node.end_lineno) \
-            if node is not None else (0, len(lines))
+    if e.old.strip():                                     # replace a few exact lines inside the function (or file)
+        try:
+            _, node = find_function(tree, name)
+            lo, hi = min([node.lineno] + [d.lineno for d in node.decorator_list]) - 1, node.end_lineno
+        except FixError:
+            lo, hi = 0, len(lines)
         out = _replace_lines(lines, lo, hi, e.old, e.code)
         if out is None:
             return src, f"the lines to replace were not found in {e.file}::{e.function}"
         return "".join(out), ""
-    if name not in defs and "." not in name:              # bare method name: unique method of that name
-        cands = [k for k in defs if k.endswith("." + name)]
-        if len(cands) == 1:
-            name = cands[0]
-        elif cands:
-            return src, (f"'{name}' is ambiguous in {e.file} ({', '.join(cands[:4])}): give the function as "
-                         "'Class.method'")
-    node = defs.get(name)
-    if not code.lstrip().startswith(("def ", "async def ", "@", "class ")):
-        return src, f"the fix for {e.file}::{e.function} must be the complete new function (def ...)"
-    if node is not None:
-        start = (node.decorator_list[0].lineno if node.decorator_list else node.lineno) - 1
-        body = textwrap.indent(code, " " * node.col_offset)
-        return "".join(lines[:start]) + body + "".join(lines[node.end_lineno:]), ""
+    try:
+        new, _ = apply_fix_to_source(src, name, code)
+        return new, ""
+    except FixError as fe:
+        if fe.reason == "unsupported_fix_shape" and "fix defines" in fe.detail and code.lstrip().startswith(_DEF):
+            _, node = find_function(tree, name)            # a rename: the new definition replaces the old one
+            start = min([node.lineno] + [d.lineno for d in node.decorator_list]) - 1
+            return "".join(lines[:start]) + textwrap.indent(code, " " * node.col_offset) + "".join(
+                lines[node.end_lineno:]), ""
+        if fe.reason != "function_not_found" or "ambiguous" in fe.detail:
+            hint = " (give the function as 'Class.method')" if "ambiguous" in fe.detail else ""
+            return src, f"{e.file}::{e.function}: {fe.reason.replace('_', ' ')} {fe.detail}{hint}".strip()
+    if not code.lstrip().startswith(_DEF):                 # a function that does not exist yet must be complete
+        return src, f"{e.file}::{e.function} does not exist; to add it, give the complete new function (def ...)"
     cls = name.rsplit(".", 1)[0] if "." in name else ""
-    if cls and isinstance(defs.get(cls), ast.ClassDef):  # new method in an existing class
-        c = defs[cls]
+    if cls:
+        c = _find_class(tree, cls)
+        if c is None:
+            return src, f"class {cls} not found in {e.file}"
         indent = " " * (c.body[0].col_offset if c.body else c.col_offset + 4)
         return "".join(lines[:c.end_lineno]) + "\n" + textwrap.indent(code, indent) + "".join(
             lines[c.end_lineno:]), ""
-    if cls:
-        return src, f"class {cls} not found in {e.file}"
     return src.rstrip("\n") + "\n\n\n" + code, ""            # new top-level function
 
 
@@ -278,12 +281,6 @@ class TestOracle:
         return bool(self.repo and (self.test_cmd or self.test_path))
 
     # ------------------------------------------------------------------ helpers
-    def _copy(self) -> tuple:
-        tmp = tempfile.mkdtemp(prefix="adaptive_fix_")
-        work = os.path.join(tmp, "repo")
-        shutil.copytree(self.repo, work, ignore=IGNORE, symlinks=True)
-        return tmp, work
-
     def related_test_files(self, changed: list, names=()) -> list:
         """Test files a developer would run for this change, most specific first: the failing test's file, test
         files named after the changed modules, test files next to the failing test that mention a changed function
@@ -335,11 +332,8 @@ class TestOracle:
     def baseline(self, files: list) -> set:
         key = tuple(files)
         if key not in self._baseline:
-            tmp, work = self._copy()
-            try:
+            with temp_repo(self.repo, "adaptive_fix_") as work:
                 self._baseline[key] = self._run_files(work, files, "before the fix")
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
         return self._baseline[key]
 
     # ------------------------------------------------------------------ main entry
@@ -348,8 +342,13 @@ class TestOracle:
         if not edits:
             return {"applied": False, "mode": "multi", "passed": False, "reason": "no_fix",
                     "output": "The diagnosis has no fix code to test."}
-        tmp, work = self._copy()
-        try:
+        if len(edits) == 1 and is_diff(edits[0].code):     # a unified diff: the single-fix check applies it
+            e = edits[0]
+            res = check_fix(self.repo, e.file, e.function, e.code, test_path=self.test_path, test_cmd=self.test_cmd,
+                            python=self.python, timeout=self.timeout)
+            return {**res, "target_passed": res["passed"], "files_changed": [], "regressions": [],
+                    "related_failing": [], "dangling": [], "output": failure_excerpt(res.get("output", ""))}
+        with temp_repo(self.repo, "adaptive_fix_") as work:
             patch = apply_edits(work, edits)
             changed = sorted(patch.files)
             if patch.problems:
@@ -373,14 +372,14 @@ class TestOracle:
                          and target_name in t)
             still = sorted(t for t in after & before if any(k and k in t for k in keys) and not is_target(t))
             passed = target["passed"] and not regressions and not dangling and not still
-            reason = ("tests_pass" if passed else "tests_fail" if not target["passed"] else
+            reason = ("passed" if passed else ("timeout" if target["timed_out"] else "tests_fail")
+                      if not target["passed"] else
                       "regressions" if regressions else "dangling_names" if dangling else "related_failing")
+            output = self.feedback(edits, changed, dict(target, output=scrub_paths(target["output"], work)),
+                                   regressions, still, dangling)
             return {"applied": True, "mode": "multi", "passed": passed, "reason": reason, "files_changed": changed,
                     "target_passed": target["passed"], "regressions": regressions, "related_failing": still,
-                    "dangling": dangling, "related_files": files,
-                    "output": self.feedback(edits, changed, target, regressions, still, dangling)}
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+                    "dangling": dangling, "related_files": files, "output": output}
 
     @staticmethod
     def feedback(edits, changed, target, regressions, still, dangling) -> str:

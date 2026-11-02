@@ -29,17 +29,16 @@ import json
 import logging
 import multiprocessing
 import os
-import shutil
 import signal
-import subprocess
-import tempfile
 import time
 import traceback
 
 from ..cases import load_cases
+from ..llm import make_llm
 from ..logs import setup_logging, short
 from ..multifix import TestOracle, apply_edits, edits_from_diagnosis, failing_tests
-from ..tools import IGNORE, kill_active_tests, run_pytest_in
+from ..tools import kill_active_tests, run_pytest_in, temp_repo
+from .bugsinpy import git_apply
 
 log = logging.getLogger(__name__)
 
@@ -84,23 +83,10 @@ def make_manifest(out: str = MANIFEST) -> int:
     return 0
 
 
-def _copy(repo: str) -> tuple:
-    tmp = tempfile.mkdtemp(prefix="adaptive_eval_")
-    work = os.path.join(tmp, "repo")
-    shutil.copytree(repo, work, ignore=IGNORE, symlinks=True)
-    return tmp, work
-
-
 def _suite(work: str, multi: dict, python: str, timeout: int) -> set:
     ign = " ".join(f"--ignore {p}" for p in multi.get("suite_ignore", []) if os.path.exists(os.path.join(work, p)))
     cmd = f"pytest -q -rf -p no:cacheprovider --continue-on-collection-errors {multi['suite']} {ign}"
     return failing_tests(run_pytest_in(work, None, timeout, 100000, python, cmd)["output"])
-
-
-def _git_apply(work: str, patch: str, include: str | None = None) -> bool:
-    cmd = ["git", "apply", *(["--include", include] if include else []), os.path.abspath(patch)]
-    env = {**os.environ, "GIT_CEILING_DIRECTORIES": os.path.dirname(work)}
-    return subprocess.run(cmd, cwd=work, capture_output=True, env=env).returncode == 0
 
 
 def _patch_path(bugsinpy: str, case) -> str:
@@ -112,12 +98,9 @@ def gold_failures(case, multi: dict, python: str, bugsinpy: str, cache: dict, ti
     if case.id not in cache:
         t0 = time.perf_counter()
         log.info("%s: running the offline suite with the maintainer's fix (reference, cached)...", case.id)
-        tmp, work = _copy(case.repo)
-        try:
-            assert _git_apply(work, _patch_path(bugsinpy, case)), f"gold patch does not apply for {case.id}"
+        with temp_repo(case.repo, "adaptive_eval_") as work:
+            git_apply(work, _patch_path(bugsinpy, case))                  # raises if the gold patch fails
             cache[case.id] = sorted(_suite(work, multi, python, timeout))
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
         log.info("%s: reference done in %.0fs (%d tests fail even with the maintainer's fix)", case.id,
                  time.perf_counter() - t0, len(cache[case.id]))
     return cache[case.id]
@@ -129,8 +112,7 @@ def score(case, multi: dict, diagnosis, python: str, gold: list, timeout: int) -
            "new_failures": [], "gold_files_touched": []}
     if not edits:
         return out
-    tmp, work = _copy(case.repo)
-    try:
+    with temp_repo(case.repo, "adaptive_eval_") as work:
         patch = apply_edits(work, edits)
         out["files_changed"] = sorted(patch.files)
         out["gold_files_touched"] = sorted(set(patch.files) & set(case.gold_files))
@@ -145,8 +127,6 @@ def score(case, multi: dict, diagnosis, python: str, gold: list, timeout: int) -
         out["new_failures"] = sorted(fails - set(gold))[:20]
         out["solved"] = out["target_passed"] and not out["new_failures"]
         return out
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def check_gold(cases, raw, envs, bugsinpy, timeout) -> int:
@@ -157,37 +137,30 @@ def check_gold(cases, raw, envs, bugsinpy, timeout) -> int:
         gold = set(gold_failures(c, multi, py, bugsinpy, cache, timeout))
         single = []
         for f in c.gold_files:
-            tmp, work = _copy(c.repo)
-            try:
-                _git_apply(work, _patch_path(bugsinpy, c), include=f)
+            with temp_repo(c.repo, "adaptive_eval_") as work:
+                git_apply(work, _patch_path(bugsinpy, c), include=f, strict=False)
                 ok = run_pytest_in(work, None, timeout, 5, py, c.test_cmd)["passed"]
                 single.append(ok and _suite(work, multi, py, timeout) <= gold)
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
         print(f"{c.id}: source files {len(c.gold_files)}  needs several files: {not any(single)} "
               f"(manifest says {multi['needs_several_files']})")
     return 0
 
 
 def _make_llm(a):
-    if a.llm == "sim":
-        from ..agent_graph import SimToolLLM
-        from ..sim import SimulatedLLM
-        return SimToolLLM(SimulatedLLM())
-    from ..llm import GroqLLM
-    return GroqLLM(model=a.model, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens)
+    return make_llm(a.llm, model=a.model, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens, tools=True)
 
 
 def run_case(case, a, python: str, llm):
-    from ..agent_graph import LangGraphAgent
     from ..chunking import chunk_repo, load_repo_dir
     from ..retrieval import BM25Retriever
     from ..tools import Tools
+    from .systems import make_system
     retr = BM25Retriever(chunk_repo(load_repo_dir(case.repo)))
     tools = Tools(retr, case.repo, python=python, test_cmd=case.test_cmd)
     verifier = TestOracle(case.repo, python=python, test_cmd=case.test_cmd).check if a.mode == "agent_verify" else None
-    agent = LangGraphAgent(retr, llm, tools=tools, initial_k=a.top_k, max_rounds=a.rounds, token_budget=a.budget,
-                           verifier=verifier, max_verify=a.max_verify, time_limit=a.agent_time)
+    agent = make_system(a.mode, retr, llm, {"top_k": a.top_k, "rounds": a.rounds, "budget": a.budget,
+                                            "max_verify": a.max_verify, "time_limit": a.agent_time},
+                        tools=tools, verifier=verifier)
     return agent.run(case.bug_report)
 
 

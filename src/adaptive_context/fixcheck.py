@@ -29,7 +29,7 @@ import subprocess
 import tempfile
 import textwrap
 
-from .tools import IGNORE, run_pytest_in
+from .tools import run_pytest_in, scrub_paths, temp_repo
 
 FIX_ERRORS = ("empty_fix", "function_not_found", "unsupported_fix_shape", "fix_syntax_error", "no_change",
               "no_similar_line")
@@ -269,10 +269,7 @@ def check_fix(repo: str, file: str, function: str, fix: str, *, test_path: str |
         except FixError as e:
             return _result(False, "", False, e.reason, e.detail)
 
-    tmp = tempfile.mkdtemp(prefix="adaptive_fix_")
-    work = os.path.join(tmp, "repo")
-    try:
-        shutil.copytree(repo, work, ignore=IGNORE)
+    with temp_repo(repo, "adaptive_fix_") as work:                # shared helper: keeps symlinks as links
         if mode == "diff":
             ok, msg = _git_apply(work, diff, check=True)
             if not ok:
@@ -284,8 +281,6 @@ def check_fix(repo: str, file: str, function: str, fix: str, *, test_path: str |
             with open(os.path.join(work, rel), "w", encoding="utf-8") as fh:
                 fh.write(new_source)
         res = run_pytest_in(work, test_path, timeout, 40, python, test_cmd)
-        out = res["output"].replace(work + os.sep, "").replace(work, ".")
+        out = scrub_paths(res["output"], work)
         reason = "passed" if res["passed"] else ("timeout" if res["timed_out"] else "tests_fail")
         return _result(True, mode, bool(res["passed"]), reason, out)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
