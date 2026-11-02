@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Adaptive-Context Debugger</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Adaptive-Context Debugger</h1>
+    <p class="sub">LLM-based Python debugging with adaptive retrieval, compression, sequencing &amp; a token budget.</p>
+  </header>
+
+  <main>
+    <section class="panel" id="input-panel">
+      <h2>1. Describe the bug</h2>
+      <textarea id="bug-report" rows="5"
+        placeholder="e.g. checkout(100, 0.20) returns 100 instead of 80. The discount is never applied."></textarea>
+
+      <h2>2. Point at the repository</h2>
+      <div class="source-tabs">
+        <button class="tab active" data-source="example">Bundled example</button>
+        <button class="tab" data-source="upload">Upload .zip</button>
+        <button class="tab" data-source="git">Public git URL</button>
+        <button class="tab" data-source="local">Server path</button>
+      </div>
+      <div class="source-body">
+        <div class="source" data-source="example">
+          <p class="hint">Uses the bundled <code>payment_bug</code> example — one click, no setup.</p>
+        </div>
+        <div class="source hidden" data-source="upload">
+          <input type="file" id="zip" accept=".zip" />
+          <p class="hint">A .zip of a Python repo (max 25&nbsp;MB).</p>
+        </div>
+        <div class="source hidden" data-source="git">
+          <input type="text" id="git-url" placeholder="https://github.com/owner/repo.git" />
+          <p class="hint">Public HTTPS git URL ending in <code>.git</code>. Shallow-cloned on the server.</p>
+        </div>
+        <div class="source hidden" data-source="local">
+          <input type="text" id="local-path" placeholder="/path/on/server/to/repo" />
+          <p class="hint">A directory on the server host. Disabled in locked-down deployments.</p>
+        </div>
+      </div>
+
+      <h2>3. Settings</h2>
+      <div class="settings">
+        <label>LLM
+          <select id="llm">
+            <option value="sim">sim — offline, free, no key</option>
+            <option value="groq">groq — real model (needs server key)</option>
+          </select>
+        </label>
+        <label>Mode
+          <select id="mode">
+            <option value="adaptive">adaptive — iterative (our system)</option>
+            <option value="baseline">baseline — static Top-K</option>
+          </select>
+        </label>
+        <label>Token budget <input type="number" id="budget" value="3000" min="100" max="32000" /></label>
+        <label>Max rounds <input type="number" id="rounds" value="6" min="1" max="20" /></label>
+        <label>Top-K <input type="number" id="topk" value="3" min="1" max="50" /></label>
+        <label>Prefetch depth <input type="number" id="prefetch" value="2" min="0" max="5" /></label>
+      </div>
+
+      <button id="run" class="run">Diagnose the bug</button>
+      <p class="status" id="status"></p>
+    </section>
+
+    <section class="panel hidden" id="result-panel">
+      <h2>Result</h2>
+      <div id="verdict" class="verdict"></div>
+
+      <div class="cards">
+        <div class="card"><h3>Diagnosis</h3><div id="diagnosis"></div></div>
+        <div class="card"><h3>Suggested fix</h3><pre id="fix" class="code"></pre></div>
+      </div>
+
+      <h3>Evidence the model read <span class="muted">(the point of context management)</span></h3>
+      <ul id="evidence" class="evidence"></ul>
+
+      <h3>Round-by-round trace</h3>
+      <div id="trace" class="trace"></div>
+
+      <details>
+        <summary>Raw JSON</summary>
+        <pre id="raw" class="code"></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span>Pure-stdlib engine · FastAPI backend · <span id="health"></span></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

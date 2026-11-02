@@ -1,0 +1,24 @@
+# One-command run:  docker compose up --build
+# Then open http://localhost:8000
+services:
+  debugger:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # LLM: "sim" (offline, free) or "groq" (needs GROQ_API_KEY below)
+      DEFAULT_LLM: ${DEFAULT_LLM:-sim}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      # safety: local server-path source is off in the container by default
+      ALLOW_LOCAL_PATH: ${ALLOW_LOCAL_PATH:-0}
+      ALLOW_GIT_CLONE: ${ALLOW_GIT_CLONE:-1}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      MAX_REPO_FILES: ${MAX_REPO_FILES:-4000}
+    restart: unless-stopped
+    # modest resource caps; raise for large repos
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g

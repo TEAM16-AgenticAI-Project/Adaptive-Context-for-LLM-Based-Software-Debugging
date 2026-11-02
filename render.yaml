@@ -1,0 +1,28 @@
+# Render Blueprint — free, no credit card.
+# Deploys the Adaptive-Context Debugger as a Docker web service straight from this repo.
+#
+# One-time: push this file, then on https://render.com -> New -> Blueprint -> pick this repo.
+# Render reads this file and creates the service. Free plan sleeps after ~15 min idle.
+services:
+  - type: web
+    name: adaptive-context-debugger
+    runtime: docker
+    plan: free
+    rootDir: adaptive-context-ui          # the app lives in this subfolder of the repo
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: DEFAULT_LLM
+        value: sim                         # free offline mode; no API key needed
+      - key: ALLOW_LOCAL_PATH
+        value: "0"                         # safety: no server-path reads from the web
+      - key: ALLOW_GIT_CLONE
+        value: "1"
+      - key: PORT
+        value: "8000"
+      # To use the real Groq model instead of sim, add these two in the Render dashboard
+      # (Environment tab) after the first deploy — do NOT commit the key:
+      #   DEFAULT_LLM = groq
+      #   GROQ_API_KEY = <your free key from https://groq.com/>
