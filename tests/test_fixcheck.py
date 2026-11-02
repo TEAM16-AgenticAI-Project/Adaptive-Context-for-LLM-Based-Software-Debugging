@@ -256,3 +256,34 @@ def test_fix_naming_a_sibling_method_is_applied_there():
 def test_strip_fences_and_reason_list():
     assert strip_fences("text\n```py\nx = 1\n```\nmore") == "x = 1\n"
     assert {"passed", "tests_fail", "timeout", "no_change", "path_outside_repo"} <= set(CHECK_REASONS)
+
+
+# ------------------------------------------------------------------ integration with Prem's agent (agent_verify)
+def test_agent_verify_uses_real_check_fix(repo):
+    """LangGraphAgent + the real check_fix: a wrong fix is fed back, the corrected one is verified."""
+    pytest.importorskip("langgraph")
+    from adaptive_context import agent_graph as lg
+    from adaptive_context.chunking import chunk_repo, load_repo_dir
+    from adaptive_context.llm import LLMReply, ToolCall
+    from adaptive_context.retrieval import BM25Retriever
+    from adaptive_context.tools import Tools
+
+    class Script:
+        def __init__(self, steps):
+            self.steps, self.prompts = list(steps), []
+
+        def chat(self, messages, tools=None, tool_choice=None):
+            self.prompts.append(messages[-1]["content"])
+            return LLMReply("", 10, 5, 0.0, [self.steps.pop(0)])
+
+    diag = {"file": "payment.py", "function": "checkout", "cause": "the discounted value is discarded",
+            "confidence": "high"}
+    script = Script([ToolCall("diagnose", {**diag, "fix": WRONG}), ToolCall("diagnose", {**diag, "fix": GOOD})])
+    retr = BM25Retriever(chunk_repo(load_repo_dir(repo)))
+    verifier = lambda d: check_fix(repo, d.file, d.function, d.fix, test_path=TEST)   # noqa: E731 (as in cli.py)
+    before = _digest(repo)
+    res = lg.LangGraphAgent(retr, script, tools=Tools(retr, repo, test_path=TEST), verifier=verifier).run(
+        "checkout returns the wrong amount")
+    assert res.stop_reason == "verified" and res.verification["passed"] and res.verification["reason"] == "passed"
+    assert "tests_fail" in script.prompts[1]
+    assert _digest(repo) == before
