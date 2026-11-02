@@ -1,0 +1,32 @@
+{
+  "revision": {
+    "commit": "4922e07cba3f43abd146af18b3dc21e5258e4361",
+    "src_dirty": false
+  },
+  "cases": 32,
+  "gold_passed": 32,
+  "negative_rejected": 32,
+  "negative_reasons": [
+    "no_change"
+  ],
+  "baseline_failed": 32,
+  "all_ok": 32,
+  "by_form": {
+    "function": {
+      "cases": 22,
+      "gold_passed": 22
+    },
+    "diff": {
+      "cases": 10,
+      "gold_passed": 10
+    }
+  },
+  "by_why": {
+    "imports+function": 2,
+    "module_level": 2,
+    "multi_file": 2,
+    "multi_function": 6,
+    "single_function": 20
+  },
+  "not_ok": []
+}
