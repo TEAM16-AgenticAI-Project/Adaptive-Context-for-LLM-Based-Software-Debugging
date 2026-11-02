@@ -1,8 +1,12 @@
 # Section 7 — Repository and team contributions (Deep draft)
 
 Repository: [TEAM16-AgenticAI-Project / Adaptive-Context-for-LLM-Based-Software-Debugging](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging).
-Deep's contribution branch is `deep/datasets-baselines`, initially based on main
-`32b46e9` and subsequently integrated with main `963f56a` (Tanay's verification). Experiment files record their producing commits individually; the
+Deep's original contribution on `deep/datasets-baselines` was merged through
+[PR #7](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/7).
+Follow-up integration fixes and verification are on `deep/verification-recheck`
+in [PR #10](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/10),
+incorporating main `dc5eafd` (Tanay's verifier and Karthik's baseline/factory changes).
+Experiment files record their producing commits individually; the
 group must record the final merged submission commit after review and the final
 evaluation. The repository was public when checked on November 1, 2026.
 

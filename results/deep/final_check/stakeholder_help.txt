@@ -1,0 +1,28 @@
+usage: stakeholder_baseline.py [-h] [--manifest MANIFEST] --baseline-root
+                               BASELINE_ROOT [--out OUT]
+                               [--max-tokens MAX_TOKENS] [--model MODEL]
+                               [--timeout TIMEOUT] [--limit LIMIT]
+                               [--repo-root REPO_ROOT] [--sleep SLEEP]
+                               [--skip-live] [--env-file ENV_FILE]
+
+Adapter for the original stakeholder CLI; never sends gold/source to it. The
+upstream Rich UI discards the raw 'Relevant file' section. A temporary
+sitecustomize hook captures the original model response and selected windows,
+without changing retrieval, prompt construction or provider generation. Only
+terminal animation is bypassed. This remains a separate, unmatched reference.
+
+options:
+  -h, --help            show this help message and exit
+  --manifest MANIFEST
+  --baseline-root BASELINE_ROOT
+  --out OUT
+  --max-tokens MAX_TOKENS
+  --model MODEL
+  --timeout TIMEOUT
+  --limit LIMIT
+  --repo-root REPO_ROOT
+                        override the base directory of the manifest's repo
+                        paths
+  --sleep SLEEP
+  --skip-live
+  --env-file ENV_FILE   read GROQ_API_KEY if not already in the environment

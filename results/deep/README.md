@@ -4,8 +4,11 @@ These files are checked in deliberately despite the repository's general
 `results/` ignore rule. All evaluation numbers below come from the referenced
 JSON/JSONL files. Source revisions are stored in each summary.
 
-The latest [integration recheck](recheck/README.md) preserves both the evidence
+The [integration recheck](recheck/README.md) preserves both the evidence
 audit and Tanay's verifier on one branch and includes a clean-checkout gate.
+The latest [command checks](final_check/README.md) rerun both CLI actions and
+controlled validation on committed revision `9af7cc9`, after repairing the local
+package installation.
 
 | Artifact | Scope and producing revision |
 | --- | --- |

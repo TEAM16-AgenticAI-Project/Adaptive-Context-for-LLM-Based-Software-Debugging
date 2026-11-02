@@ -1,0 +1,88 @@
+  thefuck-1  function gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-2  function gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-3  function gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-4  function gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-5  function gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-6  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-7  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-8  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+  thefuck-9  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-10  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-11  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-12  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-13  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-14  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-15  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-16  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-17  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-18  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-19  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-20  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-21  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-22  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-23  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-24  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-25  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-26  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-27  function gold=passed     neg=no_change    baseline_failed=True  OK
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:24: SyntaxWarning: invalid escape sequence '\('
+<unknown>:24: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:24: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+ thefuck-28  diff     gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-29  function gold=passed     neg=no_change    baseline_failed=True  OK
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+<unknown>:23: SyntaxWarning: invalid escape sequence '\('
+ thefuck-30  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-31  function gold=passed     neg=no_change    baseline_failed=True  OK
+ thefuck-32  function gold=passed     neg=no_change    baseline_failed=True  OK
+{
+  "cases": 32,
+  "gold_passed": 32,
+  "negative_rejected": 32,
+  "negative_reasons": [
+    "no_change"
+  ],
+  "baseline_failed": 32,
+  "all_ok": 32,
+  "by_form": {
+    "function": {
+      "cases": 22,
+      "gold_passed": 22
+    },
+    "diff": {
+      "cases": 10,
+      "gold_passed": 10
+    }
+  },
+  "by_why": {
+    "imports+function": 2,
+    "module_level": 2,
+    "multi_file": 2,
+    "multi_function": 6,
+    "single_function": 20
+  },
+  "not_ok": []
+}

@@ -1,0 +1,11 @@
+usage: adaptive-context [-h] {debug,bench,cases,audit} ...
+
+positional arguments:
+  {debug,bench,cases,audit}
+    debug               debug a repository from a bug report
+    bench               benchmark on generated cases
+    cases               compare systems on a case manifest
+    audit               LLM-free evidence audit and fix-check validation
+
+options:
+  -h, --help            show this help message and exit

@@ -1,0 +1,122 @@
+{
+  "checked_on": "2026-11-01",
+  "source_revision": "9af7cc9f1ba2f55cabf594470ddf49aa0bddc4ef",
+  "source_dirty": false,
+  "python": "3.12.14",
+  "checks": {
+    "ruff": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/ruff",
+        "check",
+        "src",
+        "tests"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.06,
+      "output": "results/deep/final_check/ruff.txt"
+    },
+    "audit": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.audit",
+        "--audit",
+        "--manifest",
+        "data/real/thefuck.jsonl",
+        "--repo-root",
+        "data/reproduced",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/final_check/audit"
+      ],
+      "returncode": 0,
+      "wall_seconds": 2.62,
+      "output": "results/deep/final_check/audit.txt"
+    },
+    "cli_help": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.cli",
+        "--help"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.05,
+      "output": "results/deep/final_check/cli_help.txt"
+    },
+    "stakeholder_help": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.stakeholder_baseline",
+        "--help"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.04,
+      "output": "results/deep/final_check/stakeholder_help.txt"
+    },
+    "dataset_help": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.dataset_summary",
+        "--help"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.04,
+      "output": "results/deep/final_check/dataset_help.txt"
+    },
+    "controlled": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.controlled",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/final_check/controlled"
+      ],
+      "returncode": 0,
+      "wall_seconds": 5.9,
+      "output": "results/deep/final_check/controlled.txt"
+    },
+    "pytest": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "returncode": 0,
+      "wall_seconds": 22.21,
+      "output": "results/deep/final_check/pytest.txt"
+    },
+    "fixcheck": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.audit",
+        "--validate-fixcheck",
+        "--manifest",
+        "data/real/thefuck.jsonl",
+        "--repo-root",
+        "data/reproduced",
+        "--bugsinpy",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/BugsInPy",
+        "--env",
+        "py38-pytest6=/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/venv38/bin/python",
+        "--env",
+        "py38-pytest3=/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/venv38old/bin/python",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/final_check/fixcheck"
+      ],
+      "returncode": 0,
+      "wall_seconds": 31.37,
+      "output": "results/deep/final_check/fixcheck.txt"
+    }
+  },
+  "live_groq": "not_run; no API key supplied",
+  "native_chroma": "Known repeated-ID limitation; separate preprocessing comparison already recorded.",
+  "local_setup_repair": "macOS UF_HIDDEN flags on virtualenv .pth files prevented editable imports; a regular installation avoids .pth processing. Clearing flags was temporary because this environment restored them.",
+  "installed_source_match": {
+    "files_checked": 32,
+    "mismatches": []
+  }
+}
