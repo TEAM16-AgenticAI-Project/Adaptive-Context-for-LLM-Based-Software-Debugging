@@ -43,10 +43,16 @@ comparison, final integrated demonstration, stakeholder meeting and group report
 assembly still belong to the team owners.
 
 The native Chroma failure must be reviewed with Yadnesh before presenting the
-last-definition variant as production behavior. Tanay can add his
-`--validate-fixcheck` dispatcher to `bench/audit.py`: Deep's action is isolated in
-`run_audit(...)` and the existing `--audit` option/schema must remain compatible.
-Tanay's GitHub handle and actual non-code contributions still need confirmation.
+last-definition variant as production behavior. Main `963f56a` is now integrated:
+`bench/audit.py` supports both `--audit` and Tanay's `--validate-fixcheck`, preserving
+both helper/result interfaces. The verifier also accepts `--repo-root`, and the
+shared CLI resolves supplied interpreter paths before running temporary copies.
+Tanay's handle is `Tanay126`; final non-code contributions still need his confirmation.
+
+The integration recheck also preserves Python `**` operators while parsing bold
+response headings and scores duplicate hits at their first rank. The stakeholder
+capture hook is tested through a real offline child process using a fake provider;
+this is an integration test, not a live Groq result.
 
 ## Quick checks
 

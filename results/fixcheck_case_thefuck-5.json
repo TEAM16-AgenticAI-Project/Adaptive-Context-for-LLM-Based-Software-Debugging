@@ -1,0 +1,84 @@
+{
+  "revision": {
+    "commit": "477594675d7e14106bbb30936428a6d65c059058",
+    "src_dirty": false
+  },
+  "case": "thefuck-5",
+  "target": "thefuck/rules/git_push.py::match",
+  "test_cmd": "pytest tests/rules/test_git_push.py::test_match_bitbucket",
+  "module_cmd": "pytest tests/rules/test_git_push.py",
+  "rows": [
+    {
+      "fix": "maintainer",
+      "code": "@git_support\ndef match(command):\n    return ('push' in command.script_parts\n            and 'git push --set-upstream' in command.output)\n",
+      "regression": {
+        "applied": true,
+        "mode": "function",
+        "passed": true,
+        "reason": "passed"
+      },
+      "regression_last_line": "=========================== 1 passed in 0.07 seconds ===========================",
+      "module": {
+        "applied": true,
+        "mode": "function",
+        "passed": true,
+        "reason": "passed"
+      },
+      "module_last_line": "========================== 15 passed in 0.08 seconds ==========================="
+    },
+    {
+      "fix": "plausible",
+      "code": "@git_support\ndef match(command):\n    return ('push' in command.script_parts\n            and re.search(r'\\bset-upstream\\b', command.output) is not None)\n",
+      "regression": {
+        "applied": true,
+        "mode": "function",
+        "passed": false,
+        "reason": "tests_fail"
+      },
+      "regression_last_line": "=========================== 1 failed in 0.11 seconds ===========================",
+      "module": {
+        "applied": true,
+        "mode": "function",
+        "passed": false,
+        "reason": "tests_fail"
+      },
+      "module_last_line": "===================== 1 failed, 14 passed in 0.11 seconds ======================"
+    },
+    {
+      "fix": "unchanged",
+      "code": "@git_support\ndef match(command):\n    return ('push' in command.script_parts\n            and 'set-upstream' in command.output)\n",
+      "regression": {
+        "applied": false,
+        "mode": "",
+        "passed": false,
+        "reason": "no_change"
+      },
+      "regression_last_line": "the fix leaves the code unchanged",
+      "module": {
+        "applied": false,
+        "mode": "",
+        "passed": false,
+        "reason": "no_change"
+      },
+      "module_last_line": "the fix leaves the code unchanged"
+    },
+    {
+      "fix": "overfitted",
+      "code": "@git_support\ndef match(command):\n    return ('push' in command.script_parts\n            and 'set-upstream' in command.output\n            and 'bitbucket' not in command.output)\n",
+      "regression": {
+        "applied": true,
+        "mode": "function",
+        "passed": true,
+        "reason": "passed"
+      },
+      "regression_last_line": "=========================== 1 passed in 0.07 seconds ===========================",
+      "module": {
+        "applied": true,
+        "mode": "function",
+        "passed": true,
+        "reason": "passed"
+      },
+      "module_last_line": "========================== 15 passed in 0.08 seconds ==========================="
+    }
+  ]
+}
