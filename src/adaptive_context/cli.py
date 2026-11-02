@@ -82,7 +82,8 @@ def _debug(a) -> int:
             from .multifix import TestOracle
             verifier = TestOracle(a.repo, python=a.python, test_cmd=test_cmd, test_path=a.run_test).check
         system = LangGraphAgent(retr, llm, tools=tools, initial_k=a.top_k, max_rounds=a.rounds,
-                                token_budget=a.budget, verifier=verifier, max_verify=a.max_verify)
+                                token_budget=a.budget, verifier=verifier, max_verify=a.max_verify,
+                                time_limit=a.time_limit or None)
     res = system.run(report)
     print(json.dumps({"diagnosis": vars(res.diagnosis), "stop_reason": res.stop_reason,
                       "stats": {**vars(res.stats), "total_tokens": res.stats.total_tokens},
@@ -114,6 +115,10 @@ def main(argv=None) -> int:
     d.add_argument("--python", default=None, help="Python used to run the repo's tests (default: this one)")
     d.add_argument("--top-k", type=_positive, default=3)
     d.add_argument("--rounds", type=_positive, default=6)
+    d.add_argument("--time-limit", type=int, default=0, help="agent modes: stop after this many seconds (0 = none)")
+    d.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"],
+                   help="progress log on stderr (stdout keeps the JSON result)")
+    d.add_argument("--log-file", default=None, help="also write the log to this file")
     d.add_argument("--max-verify", type=_positive, default=3,
                    help="agent_verify: how many failed fix checks the agent may repair (each grants 2 rounds)")
     d.add_argument("--budget", type=_positive, default=3000)
@@ -134,6 +139,8 @@ def main(argv=None) -> int:
         return 0
     if rest:
         ap.error(f"unrecognized arguments: {' '.join(rest)}")
+    from .logs import setup_logging
+    setup_logging(a.log_level, a.log_file)
     return _debug(a)
 
 

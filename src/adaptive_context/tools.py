@@ -9,14 +9,21 @@ That is not a security sandbox: only run tests from repositories you trust.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
+
+from .logs import short
+
+log = logging.getLogger(__name__)
 
 _CLASS = re.compile(r"^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:", re.M)
 _AUX = re.compile(r"(^|/)(tests?|testing|demos?|examples?|docs?|maint|scripts|benchmarks?)/|(^|/)test_[^/]*$|_test\.py$")
@@ -46,14 +53,66 @@ def run_pytest_in(work: str, test_path: str | None = None, timeout: int = 60, ta
     else:
         cmd = [python or sys.executable, "-m", "pytest", "-x", "-q", "--tb=short", "-p", "no:cacheprovider",
                *([test_path] if test_path else [])]
-    try:
-        p = subprocess.run(cmd, cwd=work, env=_clean_env(work), capture_output=True, text=True, timeout=timeout)
-        out, code, timed_out = p.stdout + p.stderr, p.returncode, False
-    except subprocess.TimeoutExpired as e:
-        raw = e.stdout or ""
-        out, code, timed_out = (raw.decode(errors="replace") if isinstance(raw, bytes) else raw), -1, True
+    t0 = time.perf_counter()
+    out, code, timed_out = _run_bounded(cmd, work, timeout)
+    secs = time.perf_counter() - t0
+    if timed_out:
+        log.warning("tests TIMED OUT after %.0fs (killed with their subprocesses): %s", secs, short(" ".join(cmd[1:])))
+    else:
+        log.debug("tests %s in %.1fs: %s", "passed" if code == 0 else f"failed (rc={code})", secs,
+                  short(" ".join(cmd[1:])))
     lines = out.strip().splitlines()
-    return {"passed": code == 0, "timed_out": timed_out, "returncode": code, "output": "\n".join(lines[-tail_lines:])}
+    return {"passed": code == 0, "timed_out": timed_out, "returncode": code, "output": "\n".join(lines[-tail_lines:]),
+            "seconds": round(secs, 1)}
+
+
+def _run_bounded(cmd: list, work: str, timeout: float) -> tuple:
+    """Run a command with a hard time limit. Test suites start their own subprocesses (servers, forked workers);
+    killing only the direct child can leave them holding the output pipes, and reading the output then blocks
+    forever. So the command runs in its own process group and the whole group is killed on timeout."""
+    p = subprocess.Popen(cmd, cwd=work, env=_clean_env(work), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=(os.name == "posix"))
+    _ACTIVE.add(p)
+    try:
+        out, _ = p.communicate(timeout=timeout)
+        return out or "", p.returncode, False
+    except subprocess.TimeoutExpired as e:
+        _kill_group(p)
+        try:
+            out, _ = p.communicate(timeout=10)
+        except subprocess.TimeoutExpired:                  # a grandchild still holds the pipe: give up on it
+            out = e.output or ""
+            for stream in (p.stdout,):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        out = out.decode(errors="replace") if isinstance(out, bytes) else (out or "")
+        return out + f"\n[timed out after {timeout:.0f}s]", -1, True
+    finally:
+        _ACTIVE.discard(p)
+
+
+_ACTIVE: set = set()          # test processes currently running (each in its own process group)
+
+
+def kill_active_tests() -> None:
+    """Kill every running test process group (used when a whole case is stopped on its time limit)."""
+    for p in list(_ACTIVE):
+        _kill_group(p)
+
+
+def _kill_group(p) -> None:
+    try:
+        if os.name == "posix":
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        else:                                               # pragma: no cover
+            p.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            p.kill()
+        except OSError:
+            pass
 
 
 def run_failing_test(repo: str, test_path: str | None = None, timeout: int = 60, tail_lines: int = 40,

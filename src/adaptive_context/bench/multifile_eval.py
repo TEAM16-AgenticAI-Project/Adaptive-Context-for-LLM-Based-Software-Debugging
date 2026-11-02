@@ -17,20 +17,31 @@ Examples:
       --env py38-pytest3=... --env py38-pytest6=... --env py38=... --env py38-tornado=... --env py38-tqdm=... \\
       --out results/multifile/agent_verify
 Live runs need GROQ_API_KEY; `--llm sim` runs the pipeline offline (the simulator cannot solve real bugs).
+
+Robustness: every step is logged to the terminal and to <out>/run.log (`tail -f` it); each bug runs in its own
+worker process with a hard wall-clock limit (--case-timeout); the agent stops itself before that (--agent-time),
+every test run is bounded (--timeout) and killed with its subprocesses; results are saved after every bug.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import logging
+import multiprocessing
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
+import traceback
 
 from ..cases import load_cases
+from ..logs import setup_logging, short
 from ..multifix import TestOracle, apply_edits, edits_from_diagnosis, failing_tests
-from ..tools import IGNORE, run_pytest_in
+from ..tools import IGNORE, kill_active_tests, run_pytest_in
+
+log = logging.getLogger(__name__)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.normpath(os.path.join(HERE, "..", "..", "..", "data", "real"))
@@ -99,12 +110,16 @@ def _patch_path(bugsinpy: str, case) -> str:
 
 def gold_failures(case, multi: dict, python: str, bugsinpy: str, cache: dict, timeout: int) -> list:
     if case.id not in cache:
+        t0 = time.perf_counter()
+        log.info("%s: running the offline suite with the maintainer's fix (reference, cached)...", case.id)
         tmp, work = _copy(case.repo)
         try:
             assert _git_apply(work, _patch_path(bugsinpy, case)), f"gold patch does not apply for {case.id}"
             cache[case.id] = sorted(_suite(work, multi, python, timeout))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        log.info("%s: reference done in %.0fs (%d tests fail even with the maintainer's fix)", case.id,
+                 time.perf_counter() - t0, len(cache[case.id]))
     return cache[case.id]
 
 
@@ -124,7 +139,9 @@ def score(case, multi: dict, diagnosis, python: str, gold: list, timeout: int) -
             return out
         out["applied"] = True
         out["target_passed"] = run_pytest_in(work, None, timeout, 20, python, case.test_cmd)["passed"]
+        t0 = time.perf_counter()
         fails = _suite(work, multi, python, timeout)
+        log.info("%s: scored on the offline suite in %.0fs", case.id, time.perf_counter() - t0)
         out["new_failures"] = sorted(fails - set(gold))[:20]
         out["solved"] = out["target_passed"] and not out["new_failures"]
         return out
@@ -170,8 +187,63 @@ def run_case(case, a, python: str, llm):
     tools = Tools(retr, case.repo, python=python, test_cmd=case.test_cmd)
     verifier = TestOracle(case.repo, python=python, test_cmd=case.test_cmd).check if a.mode == "agent_verify" else None
     agent = LangGraphAgent(retr, llm, tools=tools, initial_k=a.top_k, max_rounds=a.rounds, token_budget=a.budget,
-                           verifier=verifier, max_verify=a.max_verify)
+                           verifier=verifier, max_verify=a.max_verify, time_limit=a.agent_time)
     return agent.run(case.bug_report)
+
+
+def _case_worker(cid: str, opts: dict, python: str, gold: list, multi: dict, log_file: str) -> None:
+    """One bug, in its own process: agent run + scoring; writes <out>/<id>.json. Killed on --case-timeout."""
+    setup_logging(opts["log_level"], log_file)
+
+    def _stop(*_):                                   # parent ran out of patience: take the test runs down too
+        kill_active_tests()
+        os._exit(124)
+    signal.signal(signal.SIGTERM, _stop)
+    a = argparse.Namespace(**opts)
+    case = next(c for c in load_cases(a.manifest) if c.id == cid)
+    t0 = time.perf_counter()
+    res = run_case(case, a, python, _make_llm(a))
+    log.info("%s: agent finished (%s); scoring...", cid, res.stop_reason)
+    sc = score(case, multi, res.diagnosis, python, gold, a.timeout)
+    row = {"id": cid, "needs_several_files": multi["needs_several_files"], "mode": a.mode,
+           "stop_reason": res.stop_reason, **sc, "gold_files": case.gold_files,
+           "llm_calls": res.stats.llm_calls, "tool_calls": res.stats.tool_calls,
+           "tokens": res.stats.total_tokens, "rounds": res.stats.rounds,
+           "verify_reason": res.verification.get("reason", ""), "seconds": round(time.perf_counter() - t0, 1)}
+    with open(os.path.join(a.out, f"{cid}.json"), "w", encoding="utf-8") as fh:
+        json.dump({"row": row, "diagnosis": vars(res.diagnosis), "verification": res.verification,
+                   "trace": res.trace, "context": res.context_items}, fh, indent=1, default=str)
+
+
+def _run_isolated(c, a, python: str, gold: list, multi: dict, log_file: str) -> dict:
+    """Run one bug in a worker process with a hard wall-clock limit and a heartbeat in the log."""
+    path = os.path.join(a.out, f"{c.id}.json")
+    if os.path.exists(path):
+        os.remove(path)
+    ctx = multiprocessing.get_context("spawn")
+    p = ctx.Process(target=_case_worker, args=(c.id, vars(a), python, gold, multi, log_file), name=c.id)
+    t0 = time.perf_counter()
+    p.start()
+    while p.is_alive() and time.perf_counter() - t0 < a.case_timeout:
+        p.join(min(60, max(1, a.case_timeout - (time.perf_counter() - t0))))
+        if p.is_alive():
+            log.info("%s: still running (%.0fs of %ds)", c.id, time.perf_counter() - t0, a.case_timeout)
+    base = {"id": c.id, "needs_several_files": multi["needs_several_files"], "mode": a.mode, "solved": False,
+            "target_passed": False, "files_changed": [], "gold_files": c.gold_files,
+            "seconds": round(time.perf_counter() - t0, 1)}
+    if p.is_alive():
+        log.error("%s: hit the %ds case limit: stopping it and its test runs", c.id, a.case_timeout)
+        p.terminate()
+        p.join(20)
+        if p.is_alive():
+            p.kill()
+            p.join(5)
+        return {**base, "stop_reason": "case_timeout"}
+    if not os.path.exists(path):
+        log.error("%s: worker exited with code %s without a result (see the log above)", c.id, p.exitcode)
+        return {**base, "stop_reason": f"crashed (exit {p.exitcode})"}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)["row"]
 
 
 def main(argv=None) -> int:
@@ -192,9 +264,14 @@ def main(argv=None) -> int:
     ap.add_argument("--budget", type=int, default=4000, help="token budget per prompt (multi-file needs more)")
     ap.add_argument("--max-tokens", type=int, default=4096, help="LLM output tokens (fixes in several places)")
     ap.add_argument("--max-verify", type=int, default=3)
-    ap.add_argument("--timeout", type=int, default=900, help="seconds per test-suite run")
+    ap.add_argument("--timeout", type=int, default=600, help="seconds per test-suite run (killed after)")
+    ap.add_argument("--case-timeout", type=int, default=1800, help="hard limit per bug, agent + scoring (seconds)")
+    ap.add_argument("--agent-time", type=int, default=0,
+                    help="the agent stops itself after this many seconds (default: case-timeout - timeout - 60)")
+    ap.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     ap.add_argument("--out", default=os.path.join("results", "multifile", "run"))
     a = ap.parse_args(argv)
+    a.agent_time = a.agent_time or max(300, a.case_timeout - a.timeout - 60)
     if a.make_manifest:
         return make_manifest(a.manifest)
     raw = {json.loads(line)["id"]: json.loads(line) for line in open(a.manifest, encoding="utf-8")}
@@ -211,36 +288,42 @@ def main(argv=None) -> int:
     if a.check_gold:
         return check_gold(cases, raw, envs, a.bugsinpy, a.timeout)
     os.makedirs(a.out, exist_ok=True)
+    a.out, a.manifest = os.path.abspath(a.out), os.path.abspath(a.manifest)
+    log_file = os.path.join(a.out, "run.log")
+    setup_logging(a.log_level, log_file)
+    log.info("multi-file evaluation: %d bug(s), mode %s, model %s | limits: %ds per bug, agent %ds, %ds per test "
+             "run | log: %s", len(cases), a.mode, a.model or "default", a.case_timeout, a.agent_time, a.timeout,
+             log_file)
     cache_path = os.path.join(os.path.dirname(a.out.rstrip("/")) or ".", "gold_failures.json")
     cache = json.load(open(cache_path)) if os.path.exists(cache_path) else {}
-    llm = _make_llm(a)
+    if a.llm == "groq":
+        _make_llm(a)                                     # fail fast on a missing API key, before any test runs
     rows = []
-    for c in cases:
+    for i, c in enumerate(cases, 1):
         multi, py = raw[c.id]["multi"], envs[c.env]
-        gold = gold_failures(c, multi, py, a.bugsinpy, cache, a.timeout)
-        json.dump(cache, open(cache_path, "w"), indent=1)
-        t0 = time.perf_counter()
-        res = run_case(c, a, py, llm)
-        sc = score(c, multi, res.diagnosis, py, gold, a.timeout)
-        row = {"id": c.id, "needs_several_files": multi["needs_several_files"], "mode": a.mode,
-               "stop_reason": res.stop_reason, **sc, "gold_files": c.gold_files,
-               "llm_calls": res.stats.llm_calls, "tool_calls": res.stats.tool_calls,
-               "tokens": res.stats.total_tokens, "rounds": res.stats.rounds,
-               "verify_reason": res.verification.get("reason", ""), "seconds": round(time.perf_counter() - t0, 1)}
+        log.info("===== [%d/%d] %s (env %s, needs several files: %s)", i, len(cases), c.id, c.env,
+                 multi["needs_several_files"])
+        try:
+            gold = gold_failures(c, multi, py, a.bugsinpy, cache, a.timeout)
+            with open(cache_path, "w") as fh:
+                json.dump(cache, fh, indent=1)
+            row = _run_isolated(c, a, py, gold, multi, log_file)
+        except Exception as e:                           # one broken case must not stop the run
+            log.error("%s: failed: %s\n%s", c.id, short(e, 300), traceback.format_exc())
+            row = {"id": c.id, "needs_several_files": multi["needs_several_files"], "mode": a.mode,
+                   "stop_reason": f"error: {short(e, 120)}", "solved": False, "target_passed": False,
+                   "files_changed": [], "gold_files": c.gold_files}
         rows.append(row)
-        with open(os.path.join(a.out, f"{c.id}.json"), "w", encoding="utf-8") as fh:
-            json.dump({"row": row, "diagnosis": vars(res.diagnosis), "verification": res.verification,
-                       "trace": res.trace, "context": res.context_items}, fh, indent=1, default=str)
-        print(f"{c.id:15} several={str(multi['needs_several_files']):5} solved={str(sc['solved']):5} "
-              f"target={str(sc['target_passed']):5} files={len(sc['files_changed'])} stop={res.stop_reason} "
-              f"tokens={res.stats.total_tokens} {row['seconds']}s", flush=True)
-    with open(os.path.join(a.out, "summary.jsonl"), "w", encoding="utf-8") as fh:
-        for r in rows:
-            fh.write(json.dumps(r) + "\n")
+        with open(os.path.join(a.out, "summary.jsonl"), "w", encoding="utf-8") as fh:      # saved after every bug
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+        log.info("===== %s: solved=%s target=%s files=%d stop=%s tokens=%s %ss", c.id, row.get("solved"),
+                 row.get("target_passed"), len(row.get("files_changed", [])), row.get("stop_reason"),
+                 row.get("tokens", "-"), row.get("seconds", "-"))
     several = [r for r in rows if r["needs_several_files"]]
-    print(f"\nsolved {sum(r['solved'] for r in rows)}/{len(rows)} multi-file bugs "
-          f"({sum(r['solved'] for r in several)}/{len(several)} of those that need several files); "
-          f"rows in {a.out}/summary.jsonl")
+    log.info("solved %d/%d multi-file bugs (%d/%d of those that need several files); rows in %s/summary.jsonl",
+             sum(bool(r.get("solved")) for r in rows), len(rows), sum(bool(r.get("solved")) for r in several),
+             len(several), a.out)
     return 0
 
 

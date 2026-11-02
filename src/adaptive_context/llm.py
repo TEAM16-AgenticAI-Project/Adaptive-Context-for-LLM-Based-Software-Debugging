@@ -7,11 +7,18 @@ Two call styles:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+
+from .logs import short
+
+log = logging.getLogger(__name__)
+MAX_WAIT = 60            # never sleep longer than this for one retry (Groq may ask for minutes on a daily limit)
+MAX_CALL_SECONDS = 300   # give up on one LLM call (all retries included) after this long
 
 
 class LLMError(RuntimeError):
@@ -96,6 +103,7 @@ class GroqLLM:
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}",
                    "User-Agent": "adaptive-context/0.2"}
         sent_effort = "gpt-oss" in self.model and bool(self.reasoning_effort)
+        start = time.time()
         for attempt in range(self.max_retries):
             body = dict(payload)
             if sent_effort:
@@ -116,14 +124,24 @@ class GroqLLM:
                 if e.code == 400 and sent_effort and b"reasoning" in detail:
                     sent_effort = False              # model/endpoint does not accept the parameter: retry without it
                     continue
+                reason = short(_error_body(raw).get("message", detail), 200)
                 if e.code in (429, 500, 502, 503, 504) and attempt < self.max_retries - 1:
-                    wait = float(e.headers.get("Retry-After") or 0) or min(2 ** attempt, 30)
+                    asked = float(e.headers.get("Retry-After") or 0) or min(2 ** attempt, 30)
+                    wait = min(asked, MAX_WAIT)
+                    if time.time() - start + wait > MAX_CALL_SECONDS:
+                        raise LLMError(f"HTTP {e.code} after {time.time() - start:.0f}s of retries: {reason}") from e
+                    log.warning("LLM HTTP %s (attempt %d/%d): %s -> waiting %.0fs%s", e.code, attempt + 1,
+                                self.max_retries, reason, wait, f" (server asked {asked:.0f}s)" if asked > wait else "")
                     time.sleep(wait)
                     continue
-                raise LLMError(f"HTTP {e.code}: {detail!r}") from e
-            except (urllib.error.URLError, TimeoutError) as e:
-                if attempt < self.max_retries - 1:
-                    time.sleep(min(2 ** attempt, 30))
+                log.error("LLM HTTP %s: %s", e.code, reason)
+                raise LLMError(f"HTTP {e.code}: {reason}") from e
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                if attempt < self.max_retries - 1 and time.time() - start < MAX_CALL_SECONDS:
+                    wait = min(2 ** attempt, 30)
+                    log.warning("LLM network error (attempt %d/%d): %s -> retrying in %ds", attempt + 1,
+                                self.max_retries, short(e, 160), wait)
+                    time.sleep(wait)
                     continue
                 raise LLMError(str(e)) from e
         raise LLMError("retries exhausted")

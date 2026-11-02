@@ -208,3 +208,46 @@ def test_reading_a_method_adds_its_siblings_as_neighbours(shells):
     res = _agent(shells, script, max_verify=1).run("zsh alias is wrong")
     assert any("related implementations added" in line for line in textwrap.dedent(script.seen[1]["prompt"]).splitlines())
     assert {"pkg/bash.py::Bash.app_alias", "pkg/generic.py::Generic.app_alias"} <= {c for c, _ in res.context_items}
+
+
+# ---------------------------------------------------------------- robustness: timeouts and repeats
+def test_a_hanging_test_and_its_subprocesses_are_killed(tmp_path):
+    import time
+
+    from adaptive_context.tools import run_pytest_in
+    (tmp_path / "test_hang.py").write_text(
+        "import subprocess, sys, time\n\n\ndef test_hang():\n"
+        "    subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n    time.sleep(120)\n")
+    t0 = time.time()
+    res = run_pytest_in(str(tmp_path), "test_hang.py", timeout=3, python=sys.executable)
+    assert res["timed_out"] and not res["passed"] and time.time() - t0 < 20
+
+
+def test_time_limit_stops_the_agent(shells):
+    res = _agent(shells, Script([_diag()] * 5), max_verify=3, time_limit=1e-9).run("zsh alias is wrong")
+    assert res.stop_reason == "timeout" and res.stats.llm_calls == 0
+
+
+def test_a_repeated_tool_call_is_not_run_again(shells):
+    search = ToolCall("search_code", {"query": "alias"})
+    script = Script([search, search, _diag(("pkg/bash.py", "Bash.app_alias"))])
+    res = _agent(shells, script, max_verify=1).run("zsh alias is wrong")
+    assert res.stats.tool_calls == 1 and res.trace[1]["results"][0]["repeat"]
+    assert "already called in round 1" in script.seen[2]["prompt"]
+
+
+def test_the_same_fix_is_not_tested_twice(shells):
+    calls = []
+    oracle = TestOracle(shells, python=sys.executable, test_cmd="pytest -q tests/test_zsh.py::test_app_alias")
+
+    def counting(d):
+        calls.append(d)
+        return oracle.check(d)
+    pytest.importorskip("langgraph")
+    from adaptive_context.agent_graph import LangGraphAgent
+    from adaptive_context.chunking import load_repo_dir
+    retr = BM25Retriever(chunk_repo(load_repo_dir(shells)))
+    script = Script([_diag(), _diag(), _diag(("pkg/bash.py", "Bash.app_alias"))])
+    res = LangGraphAgent(retr, script, tools=Tools(retr, shells), verifier=counting, max_verify=3).run("zsh alias")
+    assert len(calls) == 2 and res.stop_reason == "verified"
+    assert "exactly the same fix as before" in script.seen[2]["prompt"]

@@ -16,6 +16,7 @@ Everything runs in a temporary copy with a timeout. That protects the original f
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 import shutil
@@ -23,7 +24,11 @@ import tempfile
 import textwrap
 from dataclasses import dataclass, field
 
+from .logs import short
 from .tools import IGNORE, failure_excerpt, run_pytest_in
+
+log = logging.getLogger(__name__)
+_NOT_TESTS = re.compile(r"(^|/)(maint|demos?|examples?|docs?|scripts|benchmarks?|\.tox|build|dist)/")
 
 MODULE = "<module>"
 _FENCE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n|\n?\s*```\s*$")
@@ -263,7 +268,7 @@ class TestOracle:
     __test__ = False                                   # not a pytest test class
 
     def __init__(self, repo: str, python: str | None = None, test_cmd: str | None = None,
-                 test_path: str | None = None, timeout: int = 180, max_related: int = 6):
+                 test_path: str | None = None, timeout: int = 120, max_related: int = 6):
         self.repo, self.python, self.test_cmd, self.test_path = repo, python, test_cmd, test_path
         self.timeout, self.max_related = timeout, max_related
         self._baseline: dict = {}
@@ -297,8 +302,9 @@ class TestOracle:
         tests = []
         for d, dirs, files in os.walk(self.repo):
             dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x != "__pycache__")
-            tests += [os.path.relpath(os.path.join(d, f), self.repo).replace("\\", "/") for f in sorted(files)
-                      if f.endswith(".py") and re.match(r"tests?_|.*_test\.py$", f)]
+            tests += [rel for rel in (os.path.relpath(os.path.join(d, f), self.repo).replace("\\", "/")
+                                      for f in sorted(files) if f.endswith(".py") and re.match(r"tests?_|.*_test\.py$", f))
+                      if not _NOT_TESTS.search(rel)]
         stem = lambda rel: re.sub(r"^tests?_|_test$", "", os.path.splitext(os.path.basename(rel))[0])  # noqa: E731
         here = os.path.dirname(target) if target else None
         words = [re.compile(rf"\b{re.escape(n)}\b") for n in names if n and len(n) > 3]
@@ -316,19 +322,22 @@ class TestOracle:
                     out.append(t)
         return out
 
-    def _run_files(self, work: str, files: list) -> set:
+    def _run_files(self, work: str, files: list, label: str) -> set:
         if not files:
             return set()
         cmd = f"pytest -q -rf -p no:cacheprovider --continue-on-collection-errors {' '.join(files)}"
         res = run_pytest_in(work, None, self.timeout, 400, self.python, cmd)
-        return failing_tests(res["output"])
+        fails = failing_tests(res["output"])
+        log.info("    related tests %s: %d file(s), %d failing, %.0fs%s", label, len(files), len(fails),
+                 res.get("seconds", 0), " (TIMED OUT)" if res["timed_out"] else "")
+        return fails
 
     def baseline(self, files: list) -> set:
         key = tuple(files)
         if key not in self._baseline:
             tmp, work = self._copy()
             try:
-                self._baseline[key] = self._run_files(work, files)
+                self._baseline[key] = self._run_files(work, files, "before the fix")
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
         return self._baseline[key]
@@ -347,14 +356,22 @@ class TestOracle:
                 return {"applied": False, "mode": "multi", "passed": False, "reason": "apply_failed",
                         "files_changed": changed, "output": "Could not apply the fix: " + "; ".join(patch.problems)}
             dangling = dangling_names(work, patch.removed)
+            log.info("    applied %d change(s) to %s; dangling names: %d", len(edits), ", ".join(changed), len(dangling))
             target = run_pytest_in(work, self.test_path, self.timeout, 200, self.python, self.test_cmd)
+            log.info("    failing test %s (%.0fs)%s", "PASSES" if target["passed"] else "still fails",
+                     target.get("seconds", 0), " (TIMED OUT)" if target["timed_out"] else "")
             keys = {e.function.split(".")[-1] for e in edits if e.function not in (MODULE, "")}
             files = self.related_test_files(changed, sorted(keys))
-            before, after = self.baseline(files), self._run_files(work, files)
+            log.info("    related test files: %s", short(", ".join(files) or "none", 240))
+            before, after = self.baseline(files), self._run_files(work, files, "after the fix")
             regressions = sorted(after - before)
             target_name = re.split(r"[.:]", (self.test_cmd or self.test_path or "").split()[-1])[-1]
-            keys |= {target_name.split("[")[0]} if target_name else set()
-            still = sorted(t for t in after & before if any(k and k in t for k in keys))
+            target_name = target_name.split("[")[0]
+            keys |= {target_name} if target_name else set()
+            tfile = _target_file(self.test_cmd, self.test_path)
+            is_target = (lambda t: bool(tfile) and t.startswith(tfile) and bool(target_name)  # noqa: E731
+                         and target_name in t)
+            still = sorted(t for t in after & before if any(k and k in t for k in keys) and not is_target(t))
             passed = target["passed"] and not regressions and not dangling and not still
             reason = ("tests_pass" if passed else "tests_fail" if not target["passed"] else
                       "regressions" if regressions else "dangling_names" if dangling else "related_failing")
