@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
-from collections import defaultdict
 
 
 def _git(args: list[str], repo: str) -> str:
