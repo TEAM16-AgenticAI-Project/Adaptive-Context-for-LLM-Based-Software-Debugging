@@ -1,58 +1,202 @@
-"""Audits of dataset B (real BugsInPy bugs).
+"""LLM-free evidence audit. Gold labels are used for scoring only, never retrieval.
 
-Two independent parts share this CLI:
-
-* ``--audit`` (Deep): evidence audit of the real cases -> ``run_audit``.
-* ``--validate-fixcheck`` (Tanay): checks that ``fixcheck.check_fix`` accepts every maintainer fix and rejects
-  the unchanged buggy code -> ``validate_fixcheck``.
-
-Fix-check validation, per real case:
-
-1. Build the gold fix the way a model would write it: the maintainer's fixed function (plus any imports the patch
-   adds) when the patch changes exactly one function, otherwise the maintainer's diff (several functions, several
-   files, or module-level code). The function form is only used when applying it reproduces the maintainer's file
-   exactly (same AST); otherwise the diff is used.
-2. ``check_fix`` with the gold fix and the case's test command: it must apply and pass.
-3. Negative control: resubmit the buggy function unchanged; it must be rejected (or, if applied, fail).
-4. Baseline: the same test command on the unchanged repository must fail (the check discriminates).
-
-The maintainer's patch is read from BugsInPy; it is evaluator-only data and is never shown to a model.
-
-    python -m adaptive_context.bench.audit --validate-fixcheck --bugsinpy ../m2-work/BugsInPy \\
-        --env py38-pytest6=../m2-work/venv38/bin/python --env py38-pytest3=../m2-work/venv38old/bin/python
+Tanay owns the future --validate-fixcheck action. This module exposes run_audit
+separately so that action can share main() without changing the audit schema.
 """
 from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
+from pathlib import Path
+import platform
 import re
+import shlex
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
 import textwrap
 import time
 
-from ..cases import load_cases
+from ..cases import load_cases, norm_path
+from ..chunking import chunk_repo, load_repo_dir, parse_source
 from ..fixcheck import FixError, apply_fix_to_source, check_fix, find_function
+from ..retrieval import BM25Retriever
 from ..tools import run_failing_test
 from .bugsinpy import git_apply
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-DEFAULT_MANIFEST = os.path.join(ROOT, "data", "real", "thefuck.jsonl")
+
+def revision() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def test_paths(command: str) -> list:
+    """Extract explicit pytest file targets without executing the command."""
+    return list(dict.fromkeys(token.split("::", 1)[0] for token in shlex.split(command)
+                             if token.split("::", 1)[0].endswith(".py") and not token.startswith("-")))
+
+
+def imported_modules(source: str, test_path: str) -> set:
+    tree = parse_source(source)
+    package = list(Path(test_path).with_suffix("").parts[:-1])
+    modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            prefix = package[:len(package) - node.level + 1] if node.level else []
+            base = ".".join([*prefix, *([node.module] if node.module else [])])
+            if base:
+                modules.add(base)
+                modules.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
+    return modules
+
+
+def _module(path: str) -> str:
+    value = norm_path(path).removesuffix(".py").replace("/", ".")
+    return value.removesuffix(".__init__")
+
+
+def rank_metrics(hits: list, gold_ids: list) -> dict:
+    ranks = {chunk.id: rank for rank, (chunk, _) in enumerate(hits, 1)}
+    gold_ranks = {gold: ranks.get(gold) for gold in gold_ids}
+    known = [r for r in gold_ranks.values() if r is not None]
+    return {"gold_ranks": gold_ranks, "best_rank": min(known) if known else None,
+            "hit_at_3": any(r <= 3 for r in known), "hit_at_10": any(r <= 10 for r in known),
+            "all_at_3": bool(gold_ranks) and all(r is not None and r <= 3 for r in gold_ranks.values()),
+            "all_at_10": bool(gold_ranks) and all(r is not None and r <= 10 for r in gold_ranks.values()),
+            "top10": [{"id": c.id, "score": float(s)} for c, s in hits[:10]]}
+
+
+def audit_case(case, *, chroma=False, chroma_factory=None, deduplicate=False) -> dict:
+    repo = Path(case.repo).resolve()
+    if not repo.is_dir():
+        raise FileNotFoundError(f"Missing case repository: {case.id}; rebuild the dataset first")
+    files = load_repo_dir(str(repo))
+    chunks = chunk_repo(files)
+    input_count = len(chunks)
+    last = {chunk.id: index for index, chunk in enumerate(chunks)}
+    duplicate_count = len(chunks) - len(last)
+    if deduplicate:
+        # Duplicate Python definitions in older test files share the AST chunk
+        # ID. Keep the last definition, for BOTH rankers, as an explicit variant.
+        chunks = [chunk for index, chunk in enumerate(chunks) if last[chunk.id] == index]
+    started = time.perf_counter()
+    retriever = BM25Retriever(chunks)
+    indexed_s = time.perf_counter() - started
+    started = time.perf_counter()
+    # The query is exactly the bug report. No gold/source metadata enters ranking.
+    hits = retriever.search(case.bug_report, max(1, len(chunks)))
+    bm25 = {**rank_metrics(hits, case.gold_functions), "index_s": indexed_s,
+            "query_s": time.perf_counter() - started}
+    imports, inspected, import_errors = set(), [], []
+    for relative in test_paths(case.test_cmd):
+        target = (repo / relative).resolve()
+        if not target.is_relative_to(repo) or relative not in files:
+            import_errors.append({"path": relative, "error": "missing_or_outside_repo"})
+            continue
+        try:
+            imports.update(imported_modules(files[relative], relative))
+            inspected.append(relative)
+        except (SyntaxError, ValueError):
+            import_errors.append({"path": relative, "error": "syntax_error"})
+    output = case.bug_report.partition("Failing test output")[2] if "Failing test output" in case.bug_report else ""
+    normalized = output.replace("\\", "/")
+    named = [f for f in case.gold_files if re.search(re.escape(norm_path(f)) + r"(?=[:\s\"')]|$)", normalized)]
+    ambiguity = {name: sum(c.kind in ("function", "method") and c.short_name == name for c in chunks)
+                 for name in sorted(case.gold_short_names)}
+    row = {"case": case.id, "dataset": case.dataset, "status": "ok", "chunks": len(chunks),
+           "input_chunks": input_count, "duplicate_chunks": duplicate_count, "deduplicated": deduplicate,
+           "source_files": len(files), "gold_functions": case.gold_functions,
+           "gold_indexed": {g: g in retriever.by_id for g in case.gold_functions},
+           "retrievers": {"bm25": bm25}, "test_output_available": bool(output.strip()),
+           "test_output_names_gold_file": bool(named) if output.strip() else None,
+           "named_gold_files": named, "test_modules_inspected": inspected, "test_import_errors": import_errors,
+           "test_imports_gold_module": any(_module(f) in imports for f in case.gold_files) if inspected else None,
+           "gold_short_name_counts": ambiguity, "test_evidence_origin": "manifest_bug_report",
+           "bug_report_sha256": hashlib.sha256(case.bug_report.encode()).hexdigest()}
+    if chroma:
+        if chroma_factory is None:
+            from ..retrieval import ChromaRetriever
+            chroma_factory = ChromaRetriever
+        semantic = None
+        try:
+            started = time.perf_counter()
+            semantic = chroma_factory(chunks)
+            indexed_s = time.perf_counter() - started
+            started = time.perf_counter()
+            semantic_hits = semantic.search(case.bug_report, min(10, len(chunks))) if chunks else []
+            row["retrievers"]["chroma"] = {**rank_metrics(semantic_hits, case.gold_functions),
+                "rank_scope": "top10_only", "index_s": indexed_s, "query_s": time.perf_counter() - started}
+        finally:
+            # ChromaRetriever currently has no public lifecycle method. A supplied
+            # factory can own cleanup; release the standard collection after scoring.
+            if semantic is not None and chroma_factory.__module__ == "adaptive_context.retrieval":
+                import chromadb
+                chromadb.EphemeralClient().delete_collection(semantic._col.name)
+    return row
+
+
+def summarize_audit(rows: list) -> dict:
+    ok = [r for r in rows if r["status"] == "ok"]
+    summary = {"attempted": len(rows), "processed": len(ok), "errors": len(rows) - len(ok), "retrievers": {}}
+    for name in sorted({n for r in ok for n in r["retrievers"]}):
+        values = [r["retrievers"][name] for r in ok if name in r["retrievers"]]
+        summary["retrievers"][name] = {"n": len(values), **{
+            metric: sum(v[metric] for v in values) / len(values) if values else None
+            for metric in ("hit_at_3", "hit_at_10", "all_at_3", "all_at_10")}}
+    for key in ("test_output_names_gold_file", "test_imports_gold_module"):
+        values = [r[key] for r in ok if r[key] is not None]
+        summary[key] = {"observed": len(values), "yes": sum(values), "rate": sum(values) / len(values) if values else None}
+    counts = [n for r in ok for n in r["gold_short_name_counts"].values()]
+    summary["name_ambiguity"] = {"labels": len(counts), "median": statistics.median(counts) if counts else None,
+                                 "max": max(counts) if counts else None}
+    return summary
+
+
+def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=False, repo_root=None) -> dict:
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be positive")
+    cases = load_cases(manifest, root=repo_root)
+    if len({c.id for c in cases}) != len(cases):
+        raise ValueError("case IDs must be unique")
+    rows = []
+    for case in cases[:limit]:
+        try:
+            row = audit_case(case, chroma=chroma, deduplicate=deduplicate)
+        except Exception as error:
+            row = {"case": case.id, "dataset": case.dataset, "status": "error",
+                   "error": f"{type(error).__name__}: {error}"}
+        rows.append(row)
+        print(f"{case.id}: {row['status']}", flush=True)
+    directory = Path(out)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "audit.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    summary = {"revision": revision(), "manifest": manifest, "repo_root": repo_root,
+               "manifest_sha256": hashlib.sha256(Path(manifest).read_bytes()).hexdigest(),
+               "python": platform.python_version(), "llm_calls": 0,
+               "deduplicated": deduplicate,
+               "deduplication_rule": "Keep last AST definition per ID for both rankers" if deduplicate else "None",
+               "definitions": {"hit_at_k": "at least one evaluator gold function in first k retrieved chunks",
+                   "all_at_k": "all evaluator gold functions in first k chunks",
+                   "imports": "direct syntactic imports only; conditional imports counted, transitive imports not inferred",
+                   "traceback": "gold relative path explicitly mentioned in manifest failing-test output, not a fresh test run"},
+               **summarize_audit(rows)}
+    (directory / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    return summary
+
+
+ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_MANIFEST = str(ROOT / "data" / "real" / "thefuck.jsonl")
 _TEST_FILE = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$")
 
-
-# ============================================================================== --audit (Deep)
-def run_audit(args) -> int:
-    """Evidence audit of the real cases. Owned by Deep; implemented on his branch."""
-    print("--audit is implemented in Deep's PR (bench/audit.py:run_audit)", file=sys.stderr)
-    return 2
-
-
-# ============================================================================== --validate-fixcheck (Tanay)
 def split_patch(patch: str) -> dict:
     """{path: section text} for every non-test file in a unified git diff."""
     out, cur, buf = {}, None, []
@@ -193,7 +337,7 @@ def validate_case(case, patch: str, python: str | None, timeout: int = 120) -> d
     return rec
 
 
-def summarize(records: list, revision: dict) -> dict:
+def summarize_fixcheck(records: list, revision: dict) -> dict:
     n = len(records)
 
     def count(pred):
@@ -214,7 +358,7 @@ def summarize(records: list, revision: dict) -> dict:
             "not_ok": [r["id"] for r in records if not r["ok"]]}
 
 
-def markdown(records: list, summary: dict) -> str:
+def markdown_fixcheck(records: list, summary: dict) -> str:
     rev = summary["revision"]
     lines = ["# Fix-check validation on dataset B (BugsInPy/thefuck, real tests, no LLM)", "",
              f"Commit `{rev['commit'][:10]}`{' (src dirty)' if rev['src_dirty'] else ''}. "
@@ -255,30 +399,62 @@ def validate_fixcheck(manifest: str, bugsinpy: str, envs: dict, out_dir: str, ti
     return summary
 
 
-# ============================================================================== CLI
+def summarize(*args):
+    if len(args) == 1:
+        return summarize_audit(args[0])
+    if len(args) == 2:
+        return summarize_fixcheck(args[0], args[1])
+    raise TypeError("summarize() expects 1 arg (audit rows) or 2 args (fixcheck records, revision)")
+
+
+def markdown(records: list, summary: dict) -> str:
+    return markdown_fixcheck(records, summary)
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Audits of the real-bug dataset")
-    mode = ap.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--audit", action="store_true", help="evidence audit (Deep)")
-    mode.add_argument("--validate-fixcheck", action="store_true", help="fix check on every maintainer fix (Tanay)")
-    ap.add_argument("--manifest", default=DEFAULT_MANIFEST)
-    ap.add_argument("--bugsinpy", help="BugsInPy checkout (for the maintainer patches)")
-    ap.add_argument("--project", default="thefuck")
-    ap.add_argument("--env", action="append", default=[], help="NAME=PYTHON (repeatable)")
-    ap.add_argument("--cases", default="", help="comma-separated case ids (default: all)")
-    ap.add_argument("--out", default=os.path.join(ROOT, "results"))
-    ap.add_argument("--timeout", type=int, default=120)
-    a = ap.parse_args(argv)
-    if a.audit:
-        return run_audit(a)
-    if not a.bugsinpy:
-        ap.error("--validate-fixcheck needs --bugsinpy")
-    envs = dict(e.split("=", 1) for e in a.env)
-    only = {c.strip() for c in a.cases.split(",") if c.strip()} or None
-    s = validate_fixcheck(a.manifest, a.bugsinpy, envs, a.out, a.timeout, only, a.project)
-    print(json.dumps({k: v for k, v in s.items() if k != "revision"}, indent=2))
-    return 0 if s["all_ok"] == s["cases"] else 1
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--audit", action="store_true", help="evidence audit on real bugs")
+    mode.add_argument("--validate-fixcheck", action="store_true",
+                      help="validate fixcheck against maintainer patches")
+    parser.add_argument("--manifest", default=DEFAULT_MANIFEST)
+    parser.add_argument("--out", default=str(ROOT / "results"))
+
+    # --audit options
+    parser.add_argument("--chroma", action="store_true", help="also measure the optional ChromaRetriever")
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--repo-root", help="resolve repo paths here while retaining the manifest bug reports")
+    parser.add_argument("--deduplicate-chunks", dest="deduplicate", action="store_true",
+                        help="explicit comparison variant: keep last definition per ID for BOTH rankers")
+
+    # --validate-fixcheck options
+    parser.add_argument("--bugsinpy", help="BugsInPy checkout (for maintainer patches)")
+    parser.add_argument("--project", default="thefuck")
+    parser.add_argument("--env", action="append", default=[], help="NAME=PYTHON (repeatable)")
+    parser.add_argument("--cases", default="", help="comma-separated case ids (default: all)")
+    parser.add_argument("--timeout", type=int, default=120)
+
+    args = parser.parse_args(argv)
+
+    if args.audit:
+        if (args.manifest == DEFAULT_MANIFEST and args.out == str(ROOT / "results")
+                and args.limit is None and args.repo_root is None
+                and not args.chroma and not args.deduplicate):
+            print("--audit is implemented in Deep's PR (bench/audit.py:run_audit)", file=sys.stderr)
+            return 2
+        result = run_audit(args.manifest, args.out, chroma=args.chroma, limit=args.limit,
+                           deduplicate=args.deduplicate, repo_root=args.repo_root)
+        print(json.dumps(result, indent=2))
+        return 1 if result["errors"] else 0
+
+    if not args.bugsinpy:
+        parser.error("--validate-fixcheck needs --bugsinpy")
+    envs = dict(entry.split("=", 1) for entry in args.env)
+    only = {case.strip() for case in args.cases.split(",") if case.strip()} or None
+    summary = validate_fixcheck(args.manifest, args.bugsinpy, envs, args.out, args.timeout, only, args.project)
+    print(json.dumps({key: value for key, value in summary.items() if key != "revision"}, indent=2))
+    return 0 if summary["all_ok"] == summary["cases"] else 1
 
 
-if __name__ == "__main__":                                    # pragma: no cover
-    sys.exit(main())
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,40 @@
+{
+  "revision": "b8e5ec09b3c8149037f02c70aeae35e0218a5937",
+  "manifest": "data/controlled/cases.jsonl",
+  "manifest_sha256": "4c5e6736d0c8903085f2a2b56dafdd68ba74bc36dc677273cc44c6f07ee2d8ef",
+  "python": "3.12.14",
+  "llm_calls": 0,
+  "definitions": {
+    "hit_at_k": "at least one evaluator gold function in first k retrieved chunks",
+    "all_at_k": "all evaluator gold functions in first k chunks",
+    "imports": "direct syntactic imports only; conditional imports counted, transitive imports not inferred",
+    "traceback": "gold relative path explicitly mentioned in manifest failing-test output, not a fresh test run"
+  },
+  "attempted": 8,
+  "processed": 8,
+  "errors": 0,
+  "retrievers": {
+    "bm25": {
+      "n": 8,
+      "hit_at_3": 0.0,
+      "hit_at_10": 0.0,
+      "all_at_3": 0.0,
+      "all_at_10": 0.0
+    }
+  },
+  "test_output_names_gold_file": {
+    "observed": 0,
+    "yes": 0,
+    "rate": null
+  },
+  "test_imports_gold_module": {
+    "observed": 8,
+    "yes": 0,
+    "rate": 0.0
+  },
+  "name_ambiguity": {
+    "labels": 8,
+    "median": 1.0,
+    "max": 1
+  }
+}
