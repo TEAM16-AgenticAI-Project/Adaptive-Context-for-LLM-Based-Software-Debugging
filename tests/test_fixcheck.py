@@ -105,7 +105,7 @@ def test_timeout(repo):
 DIFF = """diff --git a/payment.py b/payment.py
 --- a/payment.py
 +++ b/payment.py
-@@ -3,6 +3,5 @@ from discount import apply_discount
+@@ -3,5 +3,4 @@ from discount import apply_discount
 
  def checkout(price, discount):
      \"\"\"Return the amount the customer pays.\"\"\"
