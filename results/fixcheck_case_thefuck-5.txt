@@ -1,0 +1,42 @@
+case thefuck-5  target thefuck/rules/git_push.py::match  env py38-pytest3
+regression test: pytest tests/rules/test_git_push.py::test_match_bitbucket
+whole module:    pytest tests/rules/test_git_push.py
+
+--- maintainer fix
+    @git_support
+    def match(command):
+        return ('push' in command.script_parts
+                and 'git push --set-upstream' in command.output)
+  regression test -> applied=True mode=function passed=True reason=passed
+    =========================== 1 passed in 0.07 seconds ===========================
+  whole module    -> passed=True reason=passed
+
+--- plausible fix
+    @git_support
+    def match(command):
+        return ('push' in command.script_parts
+                and re.search(r'\bset-upstream\b', command.output) is not None)
+  regression test -> applied=True mode=function passed=False reason=tests_fail
+    =========================== 1 failed in 0.11 seconds ===========================
+  whole module    -> passed=False reason=tests_fail
+
+--- unchanged fix
+    @git_support
+    def match(command):
+        return ('push' in command.script_parts
+                and 'set-upstream' in command.output)
+  regression test -> applied=False mode=- passed=False reason=no_change
+    the fix leaves the code unchanged
+  whole module    -> passed=False reason=no_change
+
+--- overfitted fix
+    @git_support
+    def match(command):
+        return ('push' in command.script_parts
+                and 'set-upstream' in command.output
+                and 'bitbucket' not in command.output)
+  regression test -> applied=True mode=function passed=True reason=passed
+    =========================== 1 passed in 0.07 seconds ===========================
+  whole module    -> passed=True reason=passed
+
+saved results/fixcheck_case_thefuck-5.json
