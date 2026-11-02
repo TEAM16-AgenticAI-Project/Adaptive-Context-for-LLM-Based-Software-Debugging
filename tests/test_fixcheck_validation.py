@@ -117,6 +117,8 @@ def test_summary_and_markdown(case):
     assert s["by_form"] == {"function": {"cases": 1, "gold_passed": 1}, "diff": {"cases": 1, "gold_passed": 1}}
     md = audit.markdown(recs, s)
     assert "| pay-1 | function |" in md and "2/2" in md
+    assert audit.markdown_fixcheck(recs, s) == md
+    assert audit.summarize_audit([])["processed"] == 0
     json.dumps(s)
 
 
@@ -130,6 +132,8 @@ def test_cli_dispatches_to_deeps_implemented_audit(monkeypatch, tmp_path):
     monkeypatch.setattr(audit, "run_audit", run_audit)
     assert audit.main(["--audit", "--manifest", "cases.jsonl", "--out", str(tmp_path), "--limit", "1"]) == 0
     assert calls[0][0] == "cases.jsonl" and calls[0][2]["limit"] == 1
+    assert audit.main(["--audit"]) == 0
+    assert calls[1][0] == audit.DEFAULT_MANIFEST
 
 
 def test_cli_dispatches_to_fixcheck_and_resolves_env_paths(monkeypatch, tmp_path):

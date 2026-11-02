@@ -165,6 +165,11 @@ def summarize(rows: list, revision: dict | None = None) -> dict:
     return summary
 
 
+def summarize_audit(rows: list) -> dict:
+    """Named evidence-summary entry point published by the main-branch merger."""
+    return summarize(rows)
+
+
 def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=False, repo_root=None) -> dict:
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
@@ -379,6 +384,11 @@ def markdown(records: list, summary: dict) -> str:
                      f"{'rejected' if not ng['passed'] else 'ACCEPTED'}: {ng['reason']} | "
                      f"{'fails' if r['baseline_failed'] else 'PASSES'} |")
     return "\n".join(lines) + "\n"
+
+
+def markdown_fixcheck(records: list, summary: dict) -> str:
+    """Preserve the named main-branch formatter as well as markdown()."""
+    return markdown(records, summary)
 
 
 def validate_fixcheck(manifest: str, bugsinpy: str, envs: dict, out_dir: str, timeout: int = 120,
