@@ -3,6 +3,10 @@
 Work is on `deep/datasets-baselines` in the TEAM16 Agentic AI repository.
 This contribution covers Deep's assigned area in `docs/m2_tasks/deep.md`.
 
+The [integration recheck](../../results/deep/recheck/README.md) records the latest
+offline validation after merging Tanay's main-branch changes, including both
+shared CLI actions and the virtualenv interpreter regression.
+
 ## Completed
 
 - LLM-free evidence audit for every dataset-B case: full BM25 gold ranks,

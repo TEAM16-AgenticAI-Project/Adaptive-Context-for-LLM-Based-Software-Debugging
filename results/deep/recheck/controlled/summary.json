@@ -1,0 +1,7 @@
+{
+  "revision": "018a61bfd134e7b74059023d0dde5ba09229ed56",
+  "manifest": "data/controlled/cases.jsonl",
+  "cases": 8,
+  "reproduced": 8,
+  "llm_calls": 0
+}

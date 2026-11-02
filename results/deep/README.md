@@ -4,6 +4,9 @@ These files are checked in deliberately despite the repository's general
 `results/` ignore rule. All evaluation numbers below come from the referenced
 JSON/JSONL files. Source revisions are stored in each summary.
 
+The latest [integration recheck](recheck/README.md) preserves both the evidence
+audit and Tanay's verifier on one branch and includes a clean-checkout gate.
+
 | Artifact | Scope and producing revision |
 | --- | --- |
 | `audit/summary.json`, `audit/audit.jsonl` | Original 32-case, LLM-free BM25 evidence audit; `b8e5ec0` |

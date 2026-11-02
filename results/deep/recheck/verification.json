@@ -1,0 +1,13 @@
+{
+  "source_revision": "1213d8757f508f3676700b0423fca5622db25cc1",
+  "tests_passed": 144,
+  "clean_checkout_returncode": 0,
+  "ruff": "passed",
+  "real_cases": 32,
+  "gold_passed": 32,
+  "negative_rejected": 32,
+  "buggy_tests_failed": 32,
+  "controlled_reproduced": 8,
+  "live_groq": "not_run: no API key",
+  "known_limit": "Native Chroma duplicate IDs; preprocessing comparison remains separate"
+}
