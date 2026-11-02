@@ -146,6 +146,23 @@ def test_cli_dispatches_to_fixcheck_and_resolves_env_paths(monkeypatch, tmp_path
     assert calls[0][0][5] == {"one"} and calls[0][1]["repo_root"] == str(tmp_path)
 
 
+def test_cli_preserves_virtualenv_interpreter_symlink(monkeypatch, tmp_path):
+    base = tmp_path / "base-python"
+    base.write_text("# interpreter target fixture")
+    virtualenv = tmp_path / "venv-python"
+    virtualenv.symlink_to(base)
+    calls = []
+
+    def validate(*args, **kwargs):
+        calls.append(args)
+        return {"revision": {}, "all_ok": 0, "cases": 0}
+
+    monkeypatch.setattr(audit, "validate_fixcheck", validate)
+    assert audit.main(["--validate-fixcheck", "--bugsinpy", str(tmp_path),
+                       "--env", f"current={virtualenv}"]) == 0
+    assert calls[0][2]["current"] == str(virtualenv)
+
+
 def test_cli_needs_bugsinpy():
     with pytest.raises(SystemExit):
         audit.main(["--validate-fixcheck"])

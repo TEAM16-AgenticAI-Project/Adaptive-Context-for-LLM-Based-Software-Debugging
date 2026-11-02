@@ -4,6 +4,11 @@ Adaptive context management for LLM-based Python debugging: **adaptive retrieval
 plus a benchmark that scales to thousands of generated bug cases and repos with thousands of chunks.
 Zero required dependencies (pure standard library). Python 3.10+.
 
+Milestone 2 adds an optional LangGraph agent with native tools, real-repository
+fix checking, and dataset/evidence tooling. Start with
+[Deep's implementation and experiment handoff](docs/report/deep_handoff.md)
+for datasets, saved results and the deferred stakeholder-reference run.
+
 ## Limitations of a static-RAG baseline -> what fixes them
 
 | Limitation | Fix in this repo | Where |
@@ -20,8 +25,8 @@ Zero required dependencies (pure standard library). Python 3.10+.
 ## Quick start
 
 ```bash
-pip install -e ".[dev]"            # no runtime deps
-pytest                             # 14 tests, <1 s
+pip install -e ".[dev,agent]"      # optional LangGraph agent plus development tools
+pytest
 
 # scale test, offline (simulated LLM). 2000 cases ~ 1 min on 1 CPU; use --workers N for more
 python -m adaptive_context.bench.run --n 2000 --workers 4 --miss 0.1
@@ -60,40 +65,44 @@ Budget sweep (500 cases, no noise): accuracy stays 1.00 down to a 600-token budg
 * **The offline LLM is a simulator** (`sim.py`). It follows the call chain and compares docstring vs `return` line; it never sees ground truth.
   It measures how well *context management* delivers evidence, not how smart a real model is. Real numbers need `--llm groq` runs.
 * The ~0.9 ceiling is the simulated 10% miss rate, not a pipeline limit.
-* Generated bugs are one kind (docstring contract vs return line). Real bugs are messier: add real repos (e.g. BugsInPy, SWE-bench Lite subset) next.
+* Generated bugs use docstring contracts versus return lines. The repository also includes BugsInPy/thefuck manifests,
+  a PySnooper pilot and controlled lexical-mismatch cases; their measurements remain separate from simulator results.
 * Token counts are a 4-chars-per-token estimate in sim mode; Groq runs use the API's usage numbers.
-* `ChromaRetriever` is included (`--retriever chroma`, `pip install -e ".[chroma]"`) but was **not run** here (needs a model download).
-* `GroqLLM` was **not run** here (no network to Groq from the build sandbox). It uses the OpenAI-compatible endpoint with retry on 429/5xx.
-* Fix verification only accepts `return <name> <op> <int>` lines and never executes other model text.
+* Chroma comparison results are in `results/deep/`. The native implementation rejects repeated chunk IDs in some snapshots;
+  the documented last-definition preprocessing variant is a separate experiment. Chroma requires `.[chroma]` and a model download.
+* Deep's live stakeholder Groq reference remains `not_run` until a key is configured; its null scores are not model failures.
+* Synthetic fix verification remains restricted. Real-repository `fixcheck.py` supports functions, lines, imports and diffs,
+  and executes patched code in temporary copies with a timeout; this is not a security sandbox.
 
 ## Layout
 
 ```
 src/adaptive_context/
   chunking.py retrieval.py compress.py budget.py sequencing.py protocol.py
-  baseline.py adaptive.py llm.py sim.py cli.py models.py tokens.py
-  bench/generate.py bench/run.py
+  baseline.py adaptive.py agent_graph.py fixcheck.py llm.py sim.py cli.py models.py tokens.py
+  bench/generate.py bench/run.py bench/audit.py bench/stakeholder_baseline.py
 tests/test_core.py        examples/payment_bug/
-
-## Not done yet (honest status)
-
-* No LangGraph loop: the agent loop is plain Python and the LLM requests symbols/queries; the `Tools` class is not yet wired in as LLM-callable function calls.
-* No `fix_check` for real repos (only the synthetic benchmark verifies fixes).
-* No real-repo datasets (BugsInPy etc.) and no real-LLM results yet.
-* `run_failing_test` uses a temp copy and timeout, which is not a security sandbox. Only run tests from repos you trust.
 ```
+
+## Current implementation and remaining work
+
+* Both the plain adaptive loop and the LangGraph agent with native tool calls are implemented.
+* Real-repository fix checking and maintainer/negative-control validation are implemented.
+* Real and controlled datasets, evidence audits and retrieval comparisons are available; final matched whole-system runs
+  and the live stakeholder-reference experiment remain evaluation work.
+* `run_failing_test` uses a temp copy and timeout, which is not a security sandbox. Only run tests from repos you trust.
 
 ## Mapping to the Milestone 2 design
 
 | Design item | Code |
 |---|---|
 | Code index (AST chunks, symbols, call graph) | `chunking.py`, `retrieval.py` |
-| Tools (`search_code`, `grep_symbol`, `read_function`, `get_callers/callees`, `run_failing_test`) | `tools.py` (index tools + sandboxed pytest) |
-| Agent loop (plan, act, update context, diagnose) | `adaptive.py` (plain Python loop; **not LangGraph yet**) |
+| Tools (`search_code`, `grep_symbol`, `read_function`, `get_callers/callees`, `run_failing_test`) | `tools.py` (index tools + pytest in a temporary copy) |
+| Agent loop (plan, act, update context, diagnose) | `adaptive.py` (plain loop), `agent_graph.py` (LangGraph + native tool calls) |
 | Context manager (compression, sequencing, budget) | `compress.py`, `sequencing.py`, `budget.py` |
 | Baseline | `baseline.py` |
-| Eval runner | `bench/run.py` (generated cases). **Not yet:** runner over real cases + `fix_check` on real repos |
+| Fix verification | `fixcheck.py`, `bench/audit.py --validate-fixcheck` (real cases), `bench/generate.py:verify_fix` (synthetic) |
+| Eval runner | `bench/run.py` (generated cases); final matched real-case runner/evaluation remains integration work |
 
-Known gaps: the loop requests symbols/queries directly rather than calling `tools.py` through function calling; the pytest-based fix check
-exists only for generated cases (`bench/generate.py:verify_fix`).
+See `docs/report/section6_remaining_work.md` for remaining evaluation and submission work.
 # Adaptive-Context-for-LLM-Based-Software-Debugging

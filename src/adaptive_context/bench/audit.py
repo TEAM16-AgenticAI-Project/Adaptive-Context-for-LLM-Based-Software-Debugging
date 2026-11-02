@@ -443,7 +443,9 @@ def main(argv=None) -> int:
         name, separator, python = item.partition("=")
         if not separator or not name or not python:
             parser.error("--env must be NAME=PYTHON")
-        envs[name] = str(Path(python).expanduser().resolve())
+        # Keep a virtualenv's interpreter symlink: resolving it selects the base
+        # Python and loses that environment's installed test dependencies.
+        envs[name] = os.path.abspath(os.path.expanduser(python))
     only = {value.strip() for value in args.cases.split(",") if value.strip()} or None
     summary = validate_fixcheck(args.manifest, args.bugsinpy, envs, args.out or os.path.join(ROOT, "results"),
                                 args.timeout, only, args.project, repo_root=args.repo_root)
