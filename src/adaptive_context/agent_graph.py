@@ -50,6 +50,10 @@ NEIGHBOUR = 1e3
 MAX_LOCATIONS = 8
 _TEST_ID = re.compile(r"([\w./-]+\.py::[\w:\[\]-]+)")
 _UNITTEST_ID = re.compile(r"`((?:\w+\.)+test\w*)`")      # e.g. `test.test_utils.TestUtil.test_dfxp2srt`
+# traceback frames: unittest/CPython `File "a/b.py", line 12, in f` and pytest `a/b.py:12: in f` / `a/b.py:12: Error`
+_FRAME = re.compile(r'File "([^"]+?\.py)", line (\d+)|^\s*([\w./-]+\.py):(\d+):(?!\s*\w*Warning)')
+_EXC_LINE = re.compile(r"^\s*(E\s|\w+(Error|Exception|Exit|Interrupt)\b|\w+\.\w+Error\b)")
+MAX_FRAMES = 6
 _CALLED = re.compile(r"`([A-Za-z_]\w*)\(")              # a call written in backticks in the bug report
 MAX_INVALID = 2
 MAX_CALLS_PER_ROUND = 3
@@ -111,6 +115,8 @@ class AgentState(TypedDict, total=False):
     extra_rounds: int          # rounds granted after a failed fix check
     best: dict                 # best fix-check result so far: {"diagnosis", "verification"}
     seen_calls: dict           # "tool:args" -> round it was first run (repeats are not executed again)
+    last_retry: bool           # the one extra round after an invalid reply on the last round was used
+    unforced: bool             # a diagnose-only round was relaxed once because the model asked for a tool
     checked: dict              # fix signature -> fix-check result (the same fix is not tested twice)
 
 
@@ -244,6 +250,21 @@ class LangGraphAgent:
                     pool[imports.id] = [imports, NEIGHBOUR]
                 hist.append(f"seed: failing test {test.id} pinned" + (", its imports added" if imports else ""))
                 log.info("seed: failing test %s pinned", test.id)
+        # Traceback frames in the report: the functions the failure ran through. The deepest two project frames
+        # (where it crashed) are pinned in full; the others enter as neighbours. Test files are skipped (the
+        # failing test is already pinned) and so are frames outside the repository (site-packages, stdlib).
+        frames, raised = self._frame_chunks(s["bug_report"])
+        for c in frames:
+            if c.id in pinned:
+                continue
+            crash = c.id in raised
+            pool[c.id] = [c, PIN if crash else NEIGHBOUR]
+            if crash:
+                pinned.add(c.id)
+        if frames:
+            hist.append("seed: traceback frames added: " + ", ".join(c.id + (" (raised here)" if c.id in raised else "")
+                                                                     for c in frames))
+            log.info("seed: traceback frames added: %s", short(", ".join(c.id for c in frames), 240))
         # Functions the report names as calls (e.g. `checkout(100, 0.2)`) are the entry point of the failure:
         # pin them so compression never reduces them to a signature. Unique names only, at most 2.
         named = 0
@@ -340,7 +361,19 @@ class LangGraphAgent:
                         "no valid call", time.perf_counter() - t_call, short(rejected or reply.text or "(empty)", 200))
             if invalid > MAX_INVALID:
                 return {"stats": stats, "trace": trace, "invalid": invalid, "stop": "invalid_exhausted", "calls": []}
+            if rejected and only_diag and s.get("forced") and not s.get("unforced") and s["round"] < self._limit(s):
+                # diagnose-only, but the model insists on a tool: give it that one tool round instead of
+                # burning its remaining replies on rejected calls
+                log.info("  diagnose-only round, but the model asked for a tool: allowing one more tool round")
+                note = ("You may call one more tool now (it was not offered in the last round), then diagnose.")
+                return {"stats": stats, "trace": trace, "invalid": invalid, "note": note, "history": hist,
+                        "calls": [], "forced": False, "unforced": True}
             if s["round"] >= self._limit(s):
+                if not s.get("last_retry"):            # the final answer was rejected: one more diagnose-only try
+                    log.info("  last round's reply was invalid: one more diagnose-only round")
+                    return {"stats": stats, "trace": trace, "invalid": invalid, "note": note, "history": hist,
+                            "calls": [], "extra_rounds": s.get("extra_rounds", 0) + 1, "last_retry": True,
+                            "forced": True}
                 return {"stats": stats, "trace": trace, "invalid": invalid, "stop": "round_limit", "calls": []}
             return {"stats": stats, "trace": trace, "invalid": invalid, "note": note, "history": hist, "calls": []}
         trace[-1] = {**trace[-1], "calls": [{"name": c.name, "args": c.arguments} for c in calls]}
@@ -357,6 +390,44 @@ class LangGraphAgent:
             d.replace = args["replace"] if isinstance(args.get("replace"), str) else ""
             out["diagnosis"] = d
         return out
+
+    def _frame_chunks(self, report: str) -> tuple:
+        """Project functions on the traceback(s) in `report`: (frames, ids of frames where an exception was raised).
+
+        The raise site is the deepest project frame before the exception line (`TypeError: ...`, pytest's `E   ...`
+        or `path.py:12: ValueError`). Frames outside the repository (stdlib, site-packages) are skipped but keep
+        the raise site, since the project called them; a test-file frame resets it, so an assertion raised in the
+        test does not blame the framework frame before it. Warning lines are not frames."""
+        spans: dict = {}
+        for c in self.retriever.chunks:
+            if c.kind in ("function", "method"):
+                spans.setdefault(c.path, []).append(c)
+        frames, raised, last = [], [], None
+        for line in (report or "").splitlines():
+            m = _FRAME.search(line)
+            if m:
+                path, num = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+                rel = self.tools._repo_path(path.replace("\\", "/").lstrip("./"))
+                if rel is None:                                   # stdlib / site-packages: keep the raise site
+                    continue
+                last = None
+                if re.search(r"(^|/)tests?/|(^|/)test_[^/]*$|_test\.py$", rel):
+                    continue
+                hit = [c for c in spans.get(rel, []) if c.start <= int(num) <= c.end]
+                if hit:
+                    last = min(hit, key=lambda ch: ch.end - ch.start)   # innermost definition containing the line
+                    if last.id not in {c.id for c in frames}:
+                        frames.append(last)
+                    if m.group(3) and re.match(r"\s*\w+(Error|Exception)\b", line[m.end():]):
+                        raised.append(last.id)                    # pytest: `path.py:12: ValueError`
+                        last = None
+            elif last is not None and _EXC_LINE.match(line):
+                raised.append(last.id)
+                last = None
+        raised = list(dict.fromkeys(raised))[-2:]
+        keep = [c for c in frames if c.id in raised] + [c for c in frames if c.id not in raised]
+        keep = keep[:MAX_FRAMES]
+        return [c for c in frames if c in keep], set(raised)
 
     def _limit(self, s: AgentState) -> int:
         return self.max_rounds + s.get("extra_rounds", 0)
@@ -462,6 +533,8 @@ class LangGraphAgent:
                      attempts, res.get("reason", "?"), time.perf_counter() - t_check,
                      "passes" if res.get("target_passed") else "fails", len(res.get("regressions", [])),
                      len(res.get("related_failing", [])), len(res.get("dangling", [])))
+            if not res.get("applied", True):
+                log.info("  not applied: %s", short(res.get("output", ""), 300))
         trace[-1] = {**trace[-1], "verification": {k: v for k, v in res.items() if k != "output"}}
         best = s.get("best") or {}
         if not best or _rank(res) > _rank(best["verification"]):

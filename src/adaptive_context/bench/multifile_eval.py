@@ -32,6 +32,7 @@ import os
 import signal
 import time
 import traceback
+import warnings
 
 from ..cases import load_cases
 from ..llm import make_llm
@@ -157,7 +158,9 @@ def run_case(case, a, python: str, llm):
     from .systems import make_system
     retr = BM25Retriever(chunk_repo(load_repo_dir(case.repo)))
     tools = Tools(retr, case.repo, python=python, test_cmd=case.test_cmd)
-    verifier = TestOracle(case.repo, python=python, test_cmd=case.test_cmd).check if a.mode == "agent_verify" else None
+    multi = getattr(case, "multi", None) or {}
+    verifier = TestOracle(case.repo, python=python, test_cmd=case.test_cmd,
+                          ignore=multi.get("suite_ignore", ())).check if a.mode == "agent_verify" else None
     agent = make_system(a.mode, retr, llm, {"top_k": a.top_k, "rounds": a.rounds, "budget": a.budget,
                                             "max_verify": a.max_verify, "time_limit": a.agent_time},
                         tools=tools, verifier=verifier)
@@ -172,8 +175,10 @@ def _case_worker(cid: str, opts: dict, python: str, gold: list, multi: dict, log
         kill_active_tests()
         os._exit(124)
     signal.signal(signal.SIGTERM, _stop)
+    warnings.filterwarnings("ignore", category=SyntaxWarning)       # old repos' regexes, not our code
     a = argparse.Namespace(**opts)
     case = next(c for c in load_cases(a.manifest) if c.id == cid)
+    case.multi = multi
     t0 = time.perf_counter()
     res = run_case(case, a, python, _make_llm(a))
     log.info("%s: agent finished (%s); scoring...", cid, res.stop_reason)
@@ -233,7 +238,7 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default=None)
     ap.add_argument("--reasoning-effort", default=None, choices=["low", "medium", "high"])
     ap.add_argument("--top-k", type=int, default=3)
-    ap.add_argument("--rounds", type=int, default=6)
+    ap.add_argument("--rounds", type=int, default=8, help="evidence rounds (real repos need more than toy ones)")
     ap.add_argument("--budget", type=int, default=4000, help="token budget per prompt (multi-file needs more)")
     ap.add_argument("--max-tokens", type=int, default=4096, help="LLM output tokens (fixes in several places)")
     ap.add_argument("--max-verify", type=int, default=3)
@@ -244,6 +249,7 @@ def main(argv=None) -> int:
     ap.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     ap.add_argument("--out", default=os.path.join("results", "multifile", "run"))
     a = ap.parse_args(argv)
+    warnings.filterwarnings("ignore", category=SyntaxWarning)
     a.agent_time = a.agent_time or max(300, a.case_timeout - a.timeout - 60)
     if a.make_manifest:
         return make_manifest(a.manifest)

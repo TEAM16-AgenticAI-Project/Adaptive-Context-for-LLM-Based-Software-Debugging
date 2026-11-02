@@ -229,7 +229,8 @@ def test_read_function_on_a_file_path_returns_its_functions():
                                                                   "pkg/rules/git_push.py::match"]
     big = Tools(_retriever({"pkg/big.py": "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(9))}))
     res = big.execute("read_function", {"name": "pkg/big.py"})
-    assert res.chunks == [] and "is a file with 9 functions" in res.summary
+    assert not res.pin and len(res.chunks) == 9 and "is a file with 9 functions" in res.summary   # outlines
+    assert "outlines were added" in res.summary
 
 
 SHELLS = {"pkg/shells/generic.py": "class Generic:\n    def from_shell(self, c):\n        return c\n",

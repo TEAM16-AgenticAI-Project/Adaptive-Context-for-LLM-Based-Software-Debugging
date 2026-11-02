@@ -255,3 +255,72 @@ def test_the_same_fix_is_not_tested_twice(shells):
     res = LangGraphAgent(retr, script, tools=Tools(retr, shells), verifier=counting, max_verify=3).run("zsh alias")
     assert len(calls) == 2 and res.stop_reason == "verified"
     assert "exactly the same fix as before" in script.seen[2]["prompt"]
+
+
+# ---------------------------------------------------------------- evidence: definitions, tracebacks, hints
+def test_search_for_a_name_puts_its_definition_first():
+    files = {"pkg/std.py": "class Bar:\n    @staticmethod\n    def format_meter(n):\n        return str(n)\n",
+             **{f"tests/test_{i}.py": f"def test_{i}():\n    assert format_meter({i}) == format_meter({i})\n"
+                for i in range(5)}}
+    t = Tools(BM25Retriever(chunk_repo(files)))
+    res = t.execute("search_code", {"query": "def format_meter"})
+    assert res.chunks[0][0].id == "pkg/std.py::Bar.format_meter" and "definition first" in res.summary
+    assert t.definitions_for("format_meter looks wrong") == []          # only a bare name triggers it
+
+
+def test_not_found_points_to_the_class_in_another_file():
+    files = {"web.py": "class Handler:\n    def finish(self):\n        pass\n",
+             "tests/test_web.py": "class RenderHandler(object):\n    def on_message(self, m):\n        pass\n"}
+    res = Tools(BM25Retriever(chunk_repo(files))).execute("read_function", {"name": "web.py::RenderHandler"})
+    assert "'RenderHandler' is a class defined in tests/test_web.py" in res.summary
+
+
+def test_traceback_frames_seed_the_context(shells):
+    report = ("The regression test `tests/test_zsh.py::test_app_alias` fails.\n"
+              '  File "tests/test_zsh.py", line 5, in test_app_alias\n'
+              '  File "pkg/zsh.py", line 6, in app_alias\n'
+              '  File "/usr/lib/python3.8/unittest/case.py", line 60, in testPartExecutor\n')
+    script = Script([_diag(("pkg/bash.py", "Bash.app_alias"))])
+    res = _agent(shells, script).run(report)
+    assert ("pkg/zsh.py::Zsh.app_alias", 0) in res.context_items            # the crashing frame, in full
+    assert "seed: traceback frames added: pkg/zsh.py::Zsh.app_alias" in script.seen[0]["prompt"]
+    assert "case.py" not in script.seen[0]["prompt"].split("HISTORY:")[1].split("CONTEXT:")[0]   # stdlib skipped
+
+
+def test_a_rejected_last_round_gets_one_more_try(shells):
+    class LastRejected(Script):
+        def chat(self, messages, tools=None, tool_choice=None):
+            self.seen.append({"tools": [t["function"]["name"] for t in tools or []], "prompt": messages[-1]["content"]})
+            if len(self.seen) == 1:
+                return LLMReply("", 10, 5, 0.0, [], rejected="attempted to call tool 'read_function' which was not "
+                                                            "in request.tools")
+            return LLMReply("", 10, 5, 0.0, [_diag(("pkg/bash.py", "Bash.app_alias"))])
+    script = LastRejected([])
+    res = _agent(shells, script, max_rounds=1).run("zsh alias is wrong")
+    assert res.stop_reason == "verified" and script.seen[1]["tools"] == ["diagnose"]
+
+
+def test_oracle_ignores_listed_test_files(shells):
+    oracle = TestOracle(shells, python=sys.executable, test_cmd="pytest -q tests/test_zsh.py::test_app_alias",
+                        ignore=["tests/test_bash.py"])
+    assert "tests/test_bash.py" not in oracle.related_test_files(["pkg/bash.py", "pkg/zsh.py"], ["app_alias"])
+
+
+def test_a_forced_round_is_relaxed_once_when_the_model_insists_on_a_tool(shells):
+    class Insists(Script):
+        def chat(self, messages, tools=None, tool_choice=None):
+            names = [t["function"]["name"] for t in tools or []]
+            self.seen.append({"tools": names, "prompt": messages[-1]["content"]})
+            n = len(self.seen)
+            if n <= 3:                                    # the same search 3 times -> next round is diagnose-only
+                return LLMReply("", 10, 5, 0.0, [ToolCall("search_code", {"query": "alias"})])
+            if n == 4:                                    # forced round: asks for a tool anyway -> rejected
+                return LLMReply("", 10, 5, 0.0, [], rejected="attempted to call tool 'search_code' which was not "
+                                                            "in request.tools")
+            if n == 5:
+                return LLMReply("", 10, 5, 0.0, [ToolCall("get_related", {"name": "pkg/zsh.py::Zsh.app_alias"})])
+            return LLMReply("", 10, 5, 0.0, [_diag(("pkg/bash.py", "Bash.app_alias"))])
+    script = Insists([])
+    res = _agent(shells, script, max_verify=1, max_rounds=8).run("zsh alias is wrong")
+    assert script.seen[3]["tools"] == ["diagnose"] and "get_related" in script.seen[4]["tools"]
+    assert "You may call one more tool now" in script.seen[4]["prompt"] and res.stop_reason == "verified"

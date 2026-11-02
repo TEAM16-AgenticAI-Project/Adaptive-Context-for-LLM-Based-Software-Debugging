@@ -27,6 +27,9 @@ from .logs import short
 log = logging.getLogger(__name__)
 
 _CLASS = re.compile(r"^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:", re.M)
+_DEF_QUERY = re.compile(r"^\s*(?:async\s+def|def|class)?\s*([A-Za-z_][\w.]*)\s*(?:\(\s*\))?\s*:?\s*$")
+OVERVIEW = 500.0          # priority of method outlines added for a large class (below callers/callees, above search)
+PIN_DEF = 900.0           # priority of a definition that search_code found by its exact name
 _AUX = re.compile(r"(^|/)(tests?|testing|demos?|examples?|docs?|maint|scripts|benchmarks?)/|(^|/)test_[^/]*$|_test\.py$")
 IGNORE = shutil.ignore_patterns(".git", ".venv", "venv", "__pycache__", "node_modules", "*.pyc", ".env",
                                 ".pytest_cache", ".chroma")
@@ -374,7 +377,20 @@ class Tools:
         if same:
             hint = (f" Functions named '{short}' exist in: {', '.join(same[:5])}" + (" ..." if len(same) > 5 else "")
                     + (" (it may be inherited from one of them)." if path and "." in qual else "."))
+        elif short in self.classes():                      # a class, maybe in another file (e.g. a test helper)
+            files = sorted({p for p, _ in self.classes()[short]})
+            hint = (f" '{short}' is a class defined in {', '.join(files[:3])}; read_function "
+                    f"'{files[0]}::{short}' lists its methods.")
         return f"no function '{qual or value}'{where}.{hint}"
+
+    def definitions_for(self, query: str, exclude=frozenset()) -> list:
+        """For a query that is just a name ('format_meter', 'def format_meter', 'class Bar'), its definitions:
+        keyword search ranks the many places that *use* a name above the one that defines it."""
+        m = _DEF_QUERY.match(query)
+        if not m:
+            return []
+        found = [c for c in self.resolve(m.group(1)) if c.id not in exclude]
+        return found if 0 < len(found) <= self.max_results else []
 
     # --- function-calling entry point ---
     def execute(self, name: str, args: dict, exclude=frozenset()) -> ToolResult:
@@ -393,8 +409,12 @@ class Tools:
             return ToolResult(False, f"{name} needs a non-empty string argument '{key}'.")
         value = value.strip()
         if name == "search_code":
-            hits = self.retriever.search(value, self.k, exclude)
-            return ToolResult(True, f"{len(hits)} new matches: " + ", ".join(c.id for c, _ in hits) if hits
+            defs = self.definitions_for(value, exclude)
+            hits = [(c, PIN_DEF) for c in defs]
+            if len(hits) < self.k:
+                hits += self.retriever.search(value, self.k - len(hits), exclude | {c.id for c in defs})
+            return ToolResult(True, f"{len(hits)} new matches: " + ", ".join(c.id for c, _ in hits) +
+                              (f" (definition{'s' if len(defs) > 1 else ''} first)" if defs else "") if hits
                               else "no new matches", list(hits))
         found = self.resolve(value)
         inside = [] if found else self.members(value)
@@ -404,8 +424,11 @@ class Tools:
                 found = inside
             else:
                 names = ", ".join(c.name for c in inside[:12]) + (" ..." if len(inside) > 12 else "")
-                return ToolResult(True, f"'{value}' is a {kind} with {len(inside)} functions: {names}. Call "
-                                  f"{name} with one of them as '{inside[0].path}::<name>'.")
+                outline = name == "read_function"           # a large class or file: add its methods as outlines
+                return ToolResult(True, f"'{value}' is a {kind} with {len(inside)} functions: {names}." +
+                                  (" Their outlines were added; read_function one of them to see it in full."
+                                   if outline else f" Call {name} with one of them as '{inside[0].path}::<name>'."),
+                                  [(c, OVERVIEW) for c in inside[:30]] if outline else [])
         if not found:
             return ToolResult(True, self._not_found(value))
         if name == "grep_symbol":

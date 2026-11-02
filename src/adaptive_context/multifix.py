@@ -271,9 +271,10 @@ class TestOracle:
     __test__ = False                                   # not a pytest test class
 
     def __init__(self, repo: str, python: str | None = None, test_cmd: str | None = None,
-                 test_path: str | None = None, timeout: int = 120, max_related: int = 6):
+                 test_path: str | None = None, timeout: int = 120, max_related: int = 6, ignore=()):
         self.repo, self.python, self.test_cmd, self.test_path = repo, python, test_cmd, test_path
         self.timeout, self.max_related = timeout, max_related
+        self.ignore = tuple(i.rstrip("/") for i in ignore)   # test files/dirs never run (e.g. network tests)
         self._baseline: dict = {}
 
     @property
@@ -301,7 +302,8 @@ class TestOracle:
             dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x != "__pycache__")
             tests += [rel for rel in (os.path.relpath(os.path.join(d, f), self.repo).replace("\\", "/")
                                       for f in sorted(files) if f.endswith(".py") and re.match(r"tests?_|.*_test\.py$", f))
-                      if not _NOT_TESTS.search(rel)]
+                      if not _NOT_TESTS.search(rel)
+                      and not any(rel == i or rel.startswith(i + "/") for i in self.ignore)]
         stem = lambda rel: re.sub(r"^tests?_|_test$", "", os.path.splitext(os.path.basename(rel))[0])  # noqa: E731
         here = os.path.dirname(target) if target else None
         words = [re.compile(rf"\b{re.escape(n)}\b") for n in names if n and len(n) > 3]
