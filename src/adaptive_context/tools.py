@@ -18,6 +18,8 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 
+_CLASS = re.compile(r"^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:", re.M)
+_AUX = re.compile(r"(^|/)(tests?|testing|demos?|examples?|docs?|maint|scripts|benchmarks?)/|(^|/)test_[^/]*$|_test\.py$")
 IGNORE = shutil.ignore_patterns(".git", ".venv", "venv", "__pycache__", "node_modules", "*.pyc", ".env",
                                 ".pytest_cache", ".chroma")
 SECRET_ENV = ("GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
@@ -39,6 +41,8 @@ def run_pytest_in(work: str, test_path: str | None = None, timeout: int = 60, ta
         cmd = shlex.split(test_cmd)
         if cmd and cmd[0] in ("pytest", "py.test"):
             cmd = [python or sys.executable, "-m", "pytest", *cmd[1:]]
+        elif cmd and cmd[0] in ("python", "python3"):      # e.g. BugsInPy's `python -m unittest -q test.x.T.t`
+            cmd = [python or sys.executable, *cmd[1:]]
     else:
         cmd = [python or sys.executable, "-m", "pytest", "-x", "-q", "--tb=short", "-p", "no:cacheprovider",
                *([test_path] if test_path else [])]
@@ -62,12 +66,35 @@ def run_failing_test(repo: str, test_path: str | None = None, timeout: int = 60,
     tmp = tempfile.mkdtemp(prefix="adaptive_ctx_")
     work = os.path.join(tmp, "repo")
     try:
-        shutil.copytree(repo, work, ignore=IGNORE)
+        shutil.copytree(repo, work, ignore=IGNORE, symlinks=True)   # keep (possibly dangling) links
         res = run_pytest_in(work, test_path, timeout, tail_lines, python, test_cmd)
         res["output"] = res["output"].replace(work + os.sep, "").replace(work, ".")
         return res
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+_WARN_START = re.compile(r"^=+ warnings summary =+$")
+
+
+def failure_excerpt(output: str, max_lines: int = 16) -> str:
+    """The informative part of a pytest/unittest failure: drop the warnings summary, keep the `E ...` lines with a
+    little context before them, plus the FAILED summary lines. Falls back to the last lines."""
+    lines, keep, skipping = output.splitlines(), [], False
+    for ln in lines:
+        if _WARN_START.match(ln.strip()):
+            skipping = True
+        elif skipping and ln.startswith("-- Docs:"):
+            skipping = False
+            continue
+        if not skipping:
+            keep.append(ln)
+    errs = [i for i, ln in enumerate(keep) if ln.startswith("E ")]
+    summary = [ln for ln in keep if ln.startswith(("FAILED ", "ERROR ", "FAIL:", "ERROR:"))][:4]
+    if errs:
+        body = keep[max(0, errs[0] - 4): errs[-1] + 1][: max_lines - len(summary)]
+        return "\n".join(body + [ln for ln in summary if ln not in body])
+    return "\n".join(keep[-max_lines:])
 
 
 def with_failure_output(bug_report: str, result: dict) -> str:
@@ -99,15 +126,28 @@ TOOL_SCHEMAS = [
     _schema("read_function", "Add the full body of a function to your context. Use to verify a suspect.", _NAME, ["name"]),
     _schema("get_callers", "Add the functions that call this function to your context.", _NAME, ["name"]),
     _schema("get_callees", "Add the functions this function calls to your context.", _NAME, ["name"]),
+    _schema("get_related", "Add the same method in the base class, sibling classes and subclasses (often in other "
+            "files): where a multi-file bug repeats or where an override changes behaviour.", _NAME, ["name"]),
     _schema("run_failing_test", "Run the failing test and read its traceback. Only available when a test is configured.",
             {}, []),
 ]
+_CHANGE = {"type": "object", "properties": {
+    "file": {"type": "string"},
+    "function": {"type": "string", "description": "'func', 'Cls.method', or '<module>' for an import or alias"},
+    "fix": {"type": "string", "description": "the complete new function (def ...); added if it does not exist"},
+    "replace": {"type": "string", "description": "optional: exact current lines of that function; fix then "
+                "replaces only these lines"}},
+    "required": ["file", "function", "fix"]}
 DIAGNOSE_SCHEMA = _schema(
     "diagnose", "Give the final answer once the evidence in your context supports it.",
     {"file": {"type": "string"}, "function": {"type": "string"},
      "cause": {"type": "string", "description": "one sentence citing evidence from the context"},
      "fix": {"type": "string", "description": "the complete corrected function (def ...), or the single corrected line, or ''"},
-     "confidence": {"type": "string", "enum": ["high", "low"]}},
+     "confidence": {"type": "string", "enum": ["high", "low"]},
+     "replace": {"type": "string", "description": "optional: the exact current lines that fix replaces (for a long "
+                 "function, instead of rewriting all of it)"},
+     "other_changes": {"type": "array", "items": _CHANGE,
+                       "description": "every other function, in any file, that must change too (multi-file bugs)"}},
     ["file", "function", "cause", "fix", "confidence"])
 TOOL_NAMES = tuple(s["function"]["name"] for s in TOOL_SCHEMAS)
 
@@ -120,6 +160,7 @@ class Tools:
         self.retriever, self.repo_root, self.test_path = retriever, repo_root, test_path
         self.python, self.test_cmd, self.k, self.max_results = python, test_cmd, k, max_results
         self._paths = None
+        self._classes = None
 
     @property
     def can_run_test(self) -> bool:
@@ -147,6 +188,50 @@ class Tools:
     def callers(self, name: str) -> list:
         short = str(name).split("::")[-1].split(".")[-1]
         return [c for c in self.retriever.chunks if short in c.calls and c.short_name != short]
+
+    def classes(self) -> dict:
+        """{class name: [(path, [base names])]} from the class headers in module-level chunks."""
+        if self._classes is None:
+            self._classes = {}
+            for c in self.retriever.chunks:
+                if c.kind != "function" and c.kind != "method":
+                    for m in _CLASS.finditer(c.text):
+                        bases = [b.strip().split(".")[-1] for b in (m.group(2) or "").split(",")
+                                 if b.strip() and "=" not in b]
+                        entry = (c.path, [b for b in bases if b not in ("object", "")])
+                        if entry not in self._classes.setdefault(m.group(1), []):
+                            self._classes[m.group(1)].append(entry)
+        return self._classes
+
+    def related(self, chunk) -> list:
+        """[(relation, chunk)]: the same method in base classes, subclasses and sibling classes (sharing a base)."""
+        if "." not in chunk.name:
+            return []
+        cls, meth = chunk.name.rsplit(".", 1)
+        index = self.classes()
+        mine = [bases for path, bases in index.get(cls, []) if path == chunk.path] or [[]]
+        bases = set(mine[0])
+        subs = {name for name, defs in index.items() for _, bs in defs if cls in bs}
+        sibs = {name for name, defs in index.items() for _, bs in defs if bases & set(bs)} - {cls}
+        out, seen = [], {chunk.id}
+        for relation, names in (("base", bases), ("subclass", subs), ("sibling", sibs)):
+            for c in self.retriever.chunks:
+                if c.id not in seen and c.kind in ("function", "method") and "." in c.name:
+                    k, m = c.name.rsplit(".", 1)
+                    if m == meth and k in names:
+                        out.append((relation, c))
+                        seen.add(c.id)
+        return sorted(out, key=lambda rc: bool(_AUX.search(rc[1].path)))       # library code before tests/demos
+
+    def inheritors(self, chunk) -> list:
+        """'Cls (path)' for direct subclasses that inherit this method without overriding it."""
+        if "." not in chunk.name:
+            return []
+        cls, meth = chunk.name.rsplit(".", 1)
+        overriding = {c.name.rsplit(".", 1)[0] for c in self.retriever.chunks if c.name.endswith("." + meth)}
+        heirs = [(path == chunk.path, path, name) for name, defs in self.classes().items() for path, bs in defs
+                 if cls in bs and name not in overriding and not _AUX.search(path)]
+        return [f"{name} ({path})" for _, path, name in sorted(heirs)]          # other files first
 
     def run_failing_test(self, test_path: str | None = None, timeout: int = 60) -> dict:
         return {"ok": True, **run_failing_test(self.repo_root, test_path or self.test_path, timeout,
@@ -226,7 +311,7 @@ class Tools:
                 return ToolResult(False, "run_failing_test is not available for this case.")
             res = self.run_failing_test()
             state = "timed out" if res["timed_out"] else ("passed" if res["passed"] else "failed")
-            return ToolResult(True, f"test {state}; traceback added to context", text=res["output"])
+            return ToolResult(True, f"test {state}; traceback added to context", text=failure_excerpt(res["output"], 30))
         key = "query" if name == "search_code" else "name"
         value = args.get(key)
         if not isinstance(value, str) or not value.strip():
@@ -260,6 +345,14 @@ class Tools:
                               f"e.g. 'pkg.module.{value.split('.')[-1]}' as imported by the test, or 'path.py::name'.")
         if name == "read_function":
             return ToolResult(True, "added " + ", ".join(c.id for c in found), [(c, 0.0) for c in found], pin=True)
+        if name == "get_related":
+            rel = [rc for ch in found for rc in self.related(ch)][: self.max_results]
+            heirs = [h for ch in found for h in self.inheritors(ch)][:5]
+            inherit = f" Inherited without override by: {', '.join(heirs)}." if heirs else ""
+            if not rel:
+                return ToolResult(True, f"no base, subclass or sibling implementation of '{value}' found.{inherit}")
+            return ToolResult(True, "related: " + ", ".join(f"{c.id} ({r})" for r, c in rel) + "." + inherit,
+                              [(c, 0.0) for _, c in rel], pin=True)
         if name == "get_callees":
             out = [c for ch in found for c in self.retriever.callees(ch)][: self.max_results]
         else:

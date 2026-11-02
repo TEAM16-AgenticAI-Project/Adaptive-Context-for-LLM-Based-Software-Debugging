@@ -56,9 +56,11 @@ def test_groq_tool_calls_are_parsed_safely():
 
 
 # ---------------------------------------------------------------- tools
-def test_schemas_cover_the_six_tools_and_diagnose():
+def test_schemas_cover_the_tools_and_diagnose():
     names = [s["function"]["name"] for s in TOOL_SCHEMAS]
-    assert names == ["search_code", "grep_symbol", "read_function", "get_callers", "get_callees", "run_failing_test"]
+    assert names == ["search_code", "grep_symbol", "read_function", "get_callers", "get_callees", "get_related",
+                     "run_failing_test"]
+    assert "other_changes" in DIAGNOSE_SCHEMA["function"]["parameters"]["properties"]
     assert DIAGNOSE_SCHEMA["function"]["parameters"]["required"] == ["file", "function", "cause", "fix", "confidence"]
     assert "run_failing_test" not in [s["function"]["name"] for s in Tools(_retriever()).schemas()]
 

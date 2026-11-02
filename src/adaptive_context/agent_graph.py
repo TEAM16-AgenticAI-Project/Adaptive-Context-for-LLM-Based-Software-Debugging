@@ -15,8 +15,14 @@ Graph (one round = context -> plan -> act):
            `diagnose` is offered and forced via tool_choice. Text replies with the legacy JSON protocol are
            accepted as a fallback; malformed calls are recorded and retried (up to MAX_INVALID).
 * act      executes up to MAX_CALLS_PER_ROUND tool calls, adds results to the pool and history.
-* verify   optional: a caller-supplied verifier (e.g. fixcheck.check_fix) runs the suggested fix against the
-           failing test. A failing fix is fed back once so the model can revise it.
+* verify   optional test-driven repair: a verifier (multifix.TestOracle, or fixcheck.check_fix) applies the whole
+           candidate, i.e. `fix` plus every `other_changes` location in any file, to a copy and runs the tests.
+           The feedback names a failing test, broken tests, names other files still use, and related tests that
+           still fail (often the same defect in a sibling implementation). Each failed check grants two more
+           rounds (look, then re-diagnose), up to max_verify times; the best checked candidate is returned.
+
+Multi-file support: `diagnose.other_changes` lists further locations; `get_related` and the automatic related
+context (base / sibling implementations of a method the model reads) surface code in other files.
 
 Requires `pip install -e ".[agent]"` (langgraph).
 """
@@ -37,19 +43,27 @@ from .tools import DIAGNOSE_SCHEMA, Tools
 
 PIN = 1e6
 NEIGHBOUR = 1e3
+MAX_LOCATIONS = 8
 _TEST_ID = re.compile(r"([\w./-]+\.py::[\w:\[\]-]+)")
+_UNITTEST_ID = re.compile(r"`((?:\w+\.)+test\w*)`")      # e.g. `test.test_utils.TestUtil.test_dfxp2srt`
 _CALLED = re.compile(r"`([A-Za-z_]\w*)\(")              # a call written in backticks in the bug report
 MAX_INVALID = 2
 MAX_CALLS_PER_ROUND = 3
 HISTORY_LINES = 12
 
-SYSTEM_AGENT = """You debug a Python repository from a bug report: find the single function with the defect,
-explain the cause from code you have seen, and fix it.
+SYSTEM_AGENT = """You debug a Python repository from a bug report: find the defect, explain the cause from code
+you have seen, and fix it.
 Each round shows the bug report, your recent tool calls (HISTORY) and CONTEXT: code chosen to fit a token
 budget; each header's tag says if it is full, trimmed, outline or signature.
 Call tools to gather evidence (at most 3 per round); read_function shows a function in full, so use it before
 blaming one. Many functions share names: pass the module path the test imports, e.g. "pkg.module.func".
-Call diagnose when the evidence supports an answer; fix = the corrected function (def ...) or line, or "".
+Bugs can span files: a wrong result may come from a function the suspect calls (get_callees); the same defect
+may repeat in sibling implementations of a method, or a subclass may depend on its base class (get_related);
+renaming or changing a function means its callers must change too, or keep the old name (get_callers).
+Call diagnose when the evidence supports an answer. fix = the complete corrected function (def ...), or set
+replace to the exact current lines and fix to their new lines (best for long functions). List every other
+function that must change, in any file, in other_changes, in the same form (a function that does not exist yet
+is added; function "<module>" adds module-level code such as an import or alias). Use fix "" only if you have none.
 If ALLOWED_ACTIONS is only diagnose, call diagnose now (confidence "low" if evidence is incomplete).
 Only cite code shown in CONTEXT. Without tool support, reply with ONE JSON object:
 {"action":"request","symbols":["<names>"],"queries":["<text>"]} or
@@ -108,6 +122,8 @@ class AgentState(TypedDict, total=False):
     prompt: str
     verify_attempts: int
     verification: dict
+    extra_rounds: int          # rounds granted after a failed fix check
+    best: dict                 # best fix-check result so far: {"diagnosis", "verification"}
 
 
 _SALVAGE_NAME = re.compile(r'"name"\s*:\s*"(\w+)"')
@@ -134,6 +150,24 @@ def _salvage(text: str, schemas: list) -> list:
     return [ToolCall(m.group(1), args, "repaired")] if all(k in args for k in required) else []
 
 
+def _locations(changes) -> list:
+    """Validated other_changes: [{file, function, fix}] with non-empty strings, at most MAX_LOCATIONS."""
+    out = []
+    for ch in changes if isinstance(changes, list) else []:
+        if isinstance(ch, dict) and all(isinstance(ch.get(k), str) and ch[k].strip() for k in ("file", "function", "fix")):
+            loc = {k: ch[k] for k in ("file", "function", "fix")}
+            if isinstance(ch.get("replace"), str) and ch["replace"].strip():
+                loc["replace"] = ch["replace"]
+            out.append(loc)
+    return out[:MAX_LOCATIONS]
+
+
+def _rank(res: dict) -> tuple:
+    """Order fix-check results from worst to best (for keeping the best candidate)."""
+    return (bool(res.get("passed")), bool(res.get("target_passed")), bool(res.get("applied")),
+            -len(res.get("regressions", [])) - len(res.get("dangling", [])) - len(res.get("related_failing", [])))
+
+
 def _calls_from_text(text: str) -> list:
     """Fallback for models that answer in text: map the legacy JSON protocol onto tool calls."""
     obj = parse_reply(text)
@@ -151,7 +185,8 @@ class LangGraphAgent:
 
     def __init__(self, retriever, llm, *, tools: Optional[Tools] = None, initial_k: int = 3, max_rounds: int = 6,
                  token_budget: int = 3000, sequencing: str = "dependency", compress: bool = True,
-                 verifier: Optional[Callable[[Diagnosis], dict]] = None, max_verify: int = 1):
+                 verifier: Optional[Callable[[Diagnosis], dict]] = None, max_verify: int = 1,
+                 auto_related: bool = True):
         if initial_k < 1 or max_rounds < 1 or token_budget < 1:
             raise ValueError("initial_k, max_rounds and token_budget must be positive")
         try:
@@ -162,7 +197,7 @@ class LangGraphAgent:
         self.tools = tools or Tools(retriever)
         self.initial_k, self.max_rounds, self.token_budget = initial_k, max_rounds, token_budget
         self.sequencing, self.compress = sequencing, compress
-        self.verifier, self.max_verify = verifier, max_verify
+        self.verifier, self.max_verify, self.auto_related = verifier, max_verify, auto_related
 
         g = StateGraph(AgentState)
         g.add_node("seed", self._seed)
@@ -189,9 +224,10 @@ class LangGraphAgent:
         hist = [f"seed: search(bug report) -> {', '.join(c.id for c, _ in hits) or 'nothing'}"]
         # Failing test first: if the report names a pytest id, pin that test and add its module's imports,
         # which tell the model the module path of the code under test.
-        for test_id in dict.fromkeys(_TEST_ID.findall(s["bug_report"])):
-            found = self.retriever.lookup(test_id)
-            if len(found) == 1:
+        test_ids = _TEST_ID.findall(s["bug_report"]) + _UNITTEST_ID.findall(s["bug_report"])
+        for test_id in dict.fromkeys(test_ids):
+            found = self.tools.resolve(test_id)
+            if len(found) == 1 and found[0].id not in pinned:
                 test = found[0]
                 pool[test.id] = [test, PIN]
                 pinned.add(test.id)
@@ -211,23 +247,24 @@ class LangGraphAgent:
                 hist.append(f"seed: {found[0].id} named in the report, pinned")
         return {"pool": pool, "pinned": frozenset(pinned), "history": hist, "test_output": "", "round": 0,
                 "forced": False, "stalls": 0, "invalid": 0, "note": "", "calls": [], "diagnosis": Diagnosis(), "stop": "",
-                "stats": stats, "context_items": [], "trace": [], "verify_attempts": 0, "verification": {}}
+                "stats": stats, "context_items": [], "trace": [], "verify_attempts": 0, "verification": {},
+                "extra_rounds": 0, "best": {}}
 
     def _context(self, s: AgentState) -> dict:
         rnd = s["round"] + 1
-        allowed = "diagnose" if (rnd >= self.max_rounds or s["forced"]) else "request, diagnose"
+        allowed = "diagnose" if (rnd >= self._limit(s) or s["forced"]) else "request, diagnose"
         history = "\n".join(s["history"][-HISTORY_LINES:])
         extra = f"HISTORY:\n{history}\n"
         if s["test_output"]:
             extra += f"\nFAILING TEST OUTPUT:\n{s['test_output']}\n"
         if s["note"]:
             extra += f"\nNOTE: {s['note']}\n"
-        header = build_user_prompt(s["bug_report"], "", allowed, rnd, self.max_rounds, extra)
+        header = build_user_prompt(s["bug_report"], "", allowed, rnd, self._limit(s), extra)
         res = _pack([(c, sc) for c, sc in s["pool"].values()], _code_budget(self.token_budget, SYSTEM_AGENT, header),
                     self.compress, s["pinned"])
         over = bool(getattr(res, "over_budget", False))
         ordered = order(res.items, self.retriever, self.sequencing)
-        prompt = build_user_prompt(s["bug_report"], render_context(ordered), allowed, rnd, self.max_rounds, extra)
+        prompt = build_user_prompt(s["bug_report"], render_context(ordered), allowed, rnd, self._limit(s), extra)
         stats = s["stats"]
         stats.rounds = rnd
         stats.over_budget_rounds += int(over)
@@ -282,14 +319,24 @@ class LangGraphAgent:
             hist = s["history"] + [f"round {s['round']}: invalid reply ({invalid}/{MAX_INVALID + 1})"]
             if invalid > MAX_INVALID:
                 return {"stats": stats, "trace": trace, "invalid": invalid, "stop": "invalid_exhausted", "calls": []}
-            if s["round"] >= self.max_rounds:
+            if s["round"] >= self._limit(s):
                 return {"stats": stats, "trace": trace, "invalid": invalid, "stop": "round_limit", "calls": []}
             return {"stats": stats, "trace": trace, "invalid": invalid, "note": note, "history": hist, "calls": []}
         trace[-1] = {**trace[-1], "calls": [{"name": c.name, "args": c.arguments} for c in calls]}
         out = {"stats": stats, "trace": trace, "calls": calls}
         if diag_calls:
-            out["diagnosis"] = to_diagnosis({"action": "diagnose", **calls[0].arguments})
+            args = calls[0].arguments
+            d = to_diagnosis({"action": "diagnose", **args})
+            qual = str(args.get("function", "")).split("::")[-1].strip()
+            if "." in qual:                       # keep 'Cls.method': the fix must replace that exact method
+                d.function = qual
+            d.locations = _locations(args.get("other_changes"))
+            d.replace = args["replace"] if isinstance(args.get("replace"), str) else ""
+            out["diagnosis"] = d
         return out
+
+    def _limit(self, s: AgentState) -> int:
+        return self.max_rounds + s.get("extra_rounds", 0)
 
     def _act(self, s: AgentState) -> dict:
         pool = dict(s["pool"])
@@ -297,11 +344,21 @@ class LangGraphAgent:
         hist, test_output, progress, results, missed = list(s["history"]), s["test_output"], 0, [], []
         for call in s["calls"]:
             stats.tool_calls += 1
-            if call.name in ("search_code", "grep_symbol", "read_function", "get_callers", "get_callees"):
+            if call.name in ("search_code", "grep_symbol", "read_function", "get_callers", "get_callees",
+                             "get_related"):
                 stats.retrieval_calls += 1
             r = self.tools.execute(call.name, call.arguments, exclude=frozenset(pool))
             if not r.ok:
                 stats.failures += 1
+            if self.auto_related and call.name == "read_function":
+                # multi-file awareness at low cost: the same method in the base class and in sibling classes
+                # enters the pool as low-priority neighbours (compressed or dropped first under the budget)
+                auto = [c for ch, _ in r.chunks for _, c in self.tools.related(ch)
+                        if c.id not in pool and c.id not in pinned][:3]
+                for c in auto:
+                    pool[c.id] = [c, NEIGHBOUR - 1]
+                if auto:
+                    hist.append(f"round {s['round']}: related implementations added: {', '.join(c.id for c in auto)}")
             for chunk, score in r.chunks:
                 if r.pin:
                     # newer requests rank higher, so if pinned evidence must be dropped the oldest request goes
@@ -341,21 +398,30 @@ class LangGraphAgent:
                 "test_output": test_output, "forced": forced, "stalls": stalls, "note": note, "calls": []}
 
     def _verify(self, s: AgentState) -> dict:
+        """Test-driven repair: apply the candidate (all its locations) in a copy, run the tests, feed back."""
         d, stats, trace = s["diagnosis"], s["stats"], list(s["trace"])
         res = dict(self.verifier(d)) if self.verifier else {}
         attempts = s["verify_attempts"] + 1
         trace[-1] = {**trace[-1], "verification": {k: v for k, v in res.items() if k != "output"}}
-        out = {"verification": res, "verify_attempts": attempts, "trace": trace}
+        best = s.get("best") or {}
+        if not best or _rank(res) > _rank(best["verification"]):
+            best = {"diagnosis": d, "verification": res}
+        out = {"verification": res, "verify_attempts": attempts, "trace": trace, "best": best}
         if res.get("passed"):
             return {**out, "stop": "verified"}
-        if attempts <= self.max_verify and s["round"] < self.max_rounds:
-            tail = "\n".join(str(res.get("output", "")).splitlines()[-8:])
-            note = (f"Your fix for {d.function} did not pass the failing test ({res.get('reason', 'failed')}). "
-                    "Re-check the evidence and diagnose again.")
-            hist = s["history"] + [f"round {s['round']}: diagnose({d.file}::{d.function}) -> fix check "
+        if attempts <= self.max_verify:
+            where = ", ".join(dict.fromkeys([d.file] + [loc["file"] for loc in d.locations]))
+            note = (f"Your fix (in {where}) did not pass the checks: {res.get('reason', 'failed')}. The results "
+                    "are under FAILING TEST OUTPUT. Gather evidence if needed (read_function, get_related, "
+                    "get_callers), then diagnose again with ALL the changes: fix plus other_changes.")
+            hist = s["history"] + [f"round {s['round']}: diagnose({d.file}::{d.function}"
+                                   f"{' +' + str(len(d.locations)) if d.locations else ''}) -> fix check "
                                    f"{res.get('reason', 'failed')}"]
-            return {**out, "note": note, "history": hist, "test_output": tail or s["test_output"],
-                    "diagnosis": d, "stats": stats}
+            feedback = str(res.get("output", ""))[-1500:]
+            # two more rounds per failed check: one to look, one to re-diagnose; tools allowed again
+            return {**out, "note": note, "history": hist, "test_output": feedback or s["test_output"],
+                    "diagnosis": d, "stats": stats, "extra_rounds": s.get("extra_rounds", 0) + 2,
+                    "forced": False, "stalls": 0}
         return {**out, "stop": "verify_failed"}
 
     # ------------------------------------------------------------------ routing
@@ -366,8 +432,8 @@ class LangGraphAgent:
         if not calls:
             return "context"                              # invalid reply: retry with a note
         if calls[0].name == "diagnose":
-            if self.verifier and s["diagnosis"].valid and s["diagnosis"].fix.strip():
-                return "verify"
+            if self.verifier and s["diagnosis"].valid:
+                return "verify"                         # a diagnosis without fix code gets "no_fix" feedback
             return "end"
         return "act"
 
@@ -377,18 +443,22 @@ class LangGraphAgent:
     # ------------------------------------------------------------------ public
     def run(self, bug_report: str) -> DebugResult:
         t0 = time.perf_counter()
-        final: dict[str, Any] = self.graph.invoke({"bug_report": bug_report},
-                                                  {"recursion_limit": 8 * self.max_rounds + 20})
+        limit = 8 * (self.max_rounds + 2 * self.max_verify) + 20
+        final: dict[str, Any] = self.graph.invoke({"bug_report": bug_report}, {"recursion_limit": limit})
         stats: RunStats = final["stats"]
         stats.wall_s = time.perf_counter() - t0
         d: Diagnosis = final.get("diagnosis") or Diagnosis()
+        verification = final.get("verification", {})
         stop = final.get("stop") or ""
+        best = final.get("best") or {}
+        if stop != "verified" and best and (not verification or _rank(best["verification"]) > _rank(verification)):
+            d, verification = best["diagnosis"], best["verification"]      # keep the best checked candidate
         if not stop:
             stop = "diagnosed" if d.valid else "round_limit"
             if d.valid and final.get("forced"):
                 stop = "forced_diagnosis"
         return DebugResult(d, stats, final.get("context_items", []), final.get("trace", []),
-                           stop_reason=stop, verification=final.get("verification", {}))
+                           stop_reason=stop, verification=verification)
 
 
 class SimToolLLM:

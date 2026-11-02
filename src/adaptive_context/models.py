@@ -27,6 +27,9 @@ class Diagnosis:
     fix: str = ""
     confidence: str = ""
     valid: bool = False
+    # further places the fix needs, for bugs that span several functions or files: [{file, function, fix[, replace]}]
+    locations: list = field(default_factory=list)
+    replace: str = ""          # optional: the exact current lines that `fix` replaces (instead of a whole function)
 
 
 @dataclass

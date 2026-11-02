@@ -58,7 +58,8 @@ def _debug(a) -> int:
     chunks = chunk_repo(files)
     retr = ChromaRetriever(chunks) if a.retriever == "chroma" else BM25Retriever(chunks)
     try:
-        llm = SimulatedLLM() if a.llm == "sim" else GroqLLM(model=a.model, reasoning_effort=a.reasoning_effort)
+        llm = SimulatedLLM() if a.llm == "sim" else GroqLLM(model=a.model, reasoning_effort=a.reasoning_effort,
+                                                            max_tokens=a.max_tokens)
     except LLMError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -74,18 +75,14 @@ def _debug(a) -> int:
         tools = Tools(retr, a.repo, test_path=a.run_test, python=a.python, test_cmd=test_cmd)
         verifier = None
         if a.mode == "agent_verify":
-            try:
-                from .fixcheck import check_fix          # verification lives in Tanay's PR
-            except ImportError:
-                print("--mode agent_verify needs fixcheck.py (verification PR)", file=sys.stderr)
-                return 2
             if not (a.run_test or test_cmd):
                 print("--mode agent_verify needs --run-test or --case (the regression test to rerun)", file=sys.stderr)
                 return 2
-            verifier = lambda d: check_fix(a.repo, d.file, d.function, d.fix, test_path=a.run_test,  # noqa: E731
-                                           test_cmd=test_cmd, python=a.python)
+            # multi-location check (fix + other_changes, any file) with related tests; see multifix.py
+            from .multifix import TestOracle
+            verifier = TestOracle(a.repo, python=a.python, test_cmd=test_cmd, test_path=a.run_test).check
         system = LangGraphAgent(retr, llm, tools=tools, initial_k=a.top_k, max_rounds=a.rounds,
-                                token_budget=a.budget, verifier=verifier)
+                                token_budget=a.budget, verifier=verifier, max_verify=a.max_verify)
     res = system.run(report)
     print(json.dumps({"diagnosis": vars(res.diagnosis), "stop_reason": res.stop_reason,
                       "stats": {**vars(res.stats), "total_tokens": res.stats.total_tokens},
@@ -108,6 +105,7 @@ def main(argv=None) -> int:
     d.add_argument("--mode", choices=["baseline", "adaptive", "agent", "agent_verify"], default="adaptive")
     d.add_argument("--llm", choices=["groq", "sim"], default="groq")
     d.add_argument("--model", default=None)
+    d.add_argument("--max-tokens", type=_positive, default=2048, help="LLM output tokens (use 4096 for multi-file)")
     d.add_argument("--reasoning-effort", default=None, choices=["low", "medium", "high"],
                    help="gpt-oss reasoning effort (default: $GROQ_REASONING_EFFORT or low)")
     d.add_argument("--retriever", choices=["bm25", "chroma"], default="bm25")
@@ -116,14 +114,17 @@ def main(argv=None) -> int:
     d.add_argument("--python", default=None, help="Python used to run the repo's tests (default: this one)")
     d.add_argument("--top-k", type=_positive, default=3)
     d.add_argument("--rounds", type=_positive, default=6)
+    d.add_argument("--max-verify", type=_positive, default=3,
+                   help="agent_verify: how many failed fix checks the agent may repair (each grants 2 rounds)")
     d.add_argument("--budget", type=_positive, default=3000)
     d.add_argument("--prefetch", type=int, default=2, help="adaptive mode: callee prefetch depth (0 = off)")
     for name, text in (("bench", "benchmark on generated cases"), ("cases", "compare systems on a case manifest"),
-                       ("audit", "LLM-free evidence audit and fix-check validation")):
+                       ("audit", "LLM-free evidence audit and fix-check validation"),
+                       ("multifile", "run and score the agent on real multi-file bugs")):
         sub.add_parser(name, help=text, add_help=False)          # --help goes to the runner itself
     a, rest = ap.parse_known_args(argv)
     if a.cmd != "debug":
-        module = {"bench": "run", "cases": "run_cases", "audit": "audit"}[a.cmd]
+        module = {"bench": "run", "cases": "run_cases", "audit": "audit", "multifile": "multifile_eval"}[a.cmd]
         try:                                        # run_cases (evaluation PR) and audit (datasets PR) land later
             runner = importlib.import_module(f".bench.{module}", __package__).main
         except ModuleNotFoundError:
