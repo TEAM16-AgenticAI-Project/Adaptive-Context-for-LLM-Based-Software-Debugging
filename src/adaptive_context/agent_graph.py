@@ -95,6 +95,7 @@ class AgentState(TypedDict, total=False):
     test_output: str
     round: int
     forced: bool
+    stalls: int
     invalid: int
     note: str
     calls: list
@@ -107,6 +108,30 @@ class AgentState(TypedDict, total=False):
     prompt: str
     verify_attempts: int
     verification: dict
+
+
+_SALVAGE_NAME = re.compile(r'"name"\s*:\s*"(\w+)"')
+_SALVAGE_ARG = re.compile(r'"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _salvage(text: str, schemas: list) -> list:
+    """Recover one tool call from a generation the API refused as malformed JSON, e.g.
+    '{"name": "search_code", "arguments": {"query":"class Bash",""}"}'. Only a tool offered this round, only
+    arguments from its schema, and only if every required argument is present. At temperature 0 the model repeats
+    the same broken call, so a plain retry would not help."""
+    m = _SALVAGE_NAME.search(text or "")
+    spec = {s["function"]["name"]: s["function"]["parameters"] for s in schemas}
+    if not m or m.group(1) not in spec:
+        return []
+    props, required = spec[m.group(1)].get("properties", {}), spec[m.group(1)].get("required", [])
+    args = {}
+    for k, v in _SALVAGE_ARG.findall(text[m.end():]):
+        if k in props and k not in args:
+            try:
+                args[k] = json.loads(f'"{v}"')
+            except ValueError:
+                args[k] = v
+    return [ToolCall(m.group(1), args, "repaired")] if all(k in args for k in required) else []
 
 
 def _calls_from_text(text: str) -> list:
@@ -185,7 +210,7 @@ class LangGraphAgent:
                 named += 1
                 hist.append(f"seed: {found[0].id} named in the report, pinned")
         return {"pool": pool, "pinned": frozenset(pinned), "history": hist, "test_output": "", "round": 0,
-                "forced": False, "invalid": 0, "note": "", "calls": [], "diagnosis": Diagnosis(), "stop": "",
+                "forced": False, "stalls": 0, "invalid": 0, "note": "", "calls": [], "diagnosis": Diagnosis(), "stop": "",
                 "stats": stats, "context_items": [], "trace": [], "verify_attempts": 0, "verification": {}}
 
     def _context(self, s: AgentState) -> dict:
@@ -229,6 +254,13 @@ class LangGraphAgent:
         stats.output_tokens += reply.output_tokens
         stats.latency_s += reply.latency_s
         calls = list(reply.tool_calls) or _calls_from_text(reply.text)
+        rejected = getattr(reply, "rejected", "")
+        if not calls and rejected:
+            calls = _salvage(reply.text, schemas)
+            if calls:                                    # repaired: counted as a failure, but the round goes on
+                stats.failures += 1
+                trace[-1] = {**trace[-1], "repaired": rejected[:200]}
+                rejected = ""
         diag_calls = [c for c in calls if c.name == "diagnose"]
         if diag_calls:
             calls = diag_calls[:1]
@@ -238,9 +270,15 @@ class LangGraphAgent:
         if not calls or (diag_calls and not _valid_diagnosis({"action": "diagnose", **calls[0].arguments})):
             stats.failures += 1
             invalid = s["invalid"] + 1
-            trace[-1] = {**trace[-1], "invalid": True, "reply": (reply.text or "")[:200]}
-            note = ("Your last reply had no valid tool call. Call one of the listed tools, or diagnose with all "
-                    "fields (file, function, cause, fix, confidence=high|low).")
+            trace[-1] = {**trace[-1], "invalid": True, "reply": (reply.text or "")[:200],
+                         **({"rejected": rejected[:200]} if rejected else {})}
+            if rejected:                                 # provider refused the call (e.g. a tool not offered)
+                offered = "diagnose" if only_diag else "one of the listed tools or diagnose"
+                note = (f"The API rejected your last tool call ({rejected[:160]}). Call only {offered}, with "
+                        "arguments as valid JSON.")
+            else:
+                note = ("Your last reply had no valid tool call. Call one of the listed tools, or diagnose with all "
+                        "fields (file, function, cause, fix, confidence=high|low).")
             hist = s["history"] + [f"round {s['round']}: invalid reply ({invalid}/{MAX_INVALID + 1})"]
             if invalid > MAX_INVALID:
                 return {"stats": stats, "trace": trace, "invalid": invalid, "stop": "invalid_exhausted", "calls": []}
@@ -256,7 +294,7 @@ class LangGraphAgent:
     def _act(self, s: AgentState) -> dict:
         pool = dict(s["pool"])
         pinned, stats, trace = set(s["pinned"]), s["stats"], list(s["trace"])
-        hist, test_output, progress, results = list(s["history"]), s["test_output"], 0, []
+        hist, test_output, progress, results, missed = list(s["history"]), s["test_output"], 0, [], []
         for call in s["calls"]:
             stats.tool_calls += 1
             if call.name in ("search_code", "grep_symbol", "read_function", "get_callers", "get_callees"):
@@ -285,11 +323,22 @@ class LangGraphAgent:
             args = ", ".join(f"{k}={json.dumps(v)}" for k, v in call.arguments.items())
             hist.append(f"round {s['round']}: {call.name}({args}) -> {r.summary}")
             results.append({"name": call.name, "ok": r.ok, "summary": r.summary})
+            if not r.ok or (call.name != "search_code" and not r.chunks and not r.text):
+                missed.append(f"{call.name}: {r.summary}")    # wrong name form or ambiguous; not a repeat
+        stalls = 0 if progress else s.get("stalls", 0) + 1
         trace[-1] = {**trace[-1], "action": "tools", "results": results, "progress": progress}
-        forced = s["forced"] or progress == 0
-        note = "Your last tool calls added no new evidence. Diagnose now with what you have." if progress == 0 else ""
+        # No new evidence: if the calls only repeated what the model already has, it is done searching -> force a
+        # diagnosis. If a lookup simply missed (wrong name form), give it one more round with the reason first.
+        forced = s["forced"] or (progress == 0 and (not missed or stalls >= 2))
+        if progress:
+            note = ""
+        elif forced:
+            note = "Your last tool calls added no new evidence. Diagnose now with what you have."
+        else:
+            note = ("Your last lookup found nothing (" + "; ".join(missed)[:300] + "). Use a name shown in CONTEXT "
+                    "or HISTORY, as 'pkg.module.func' or 'path.py::func', or diagnose.")
         return {"pool": pool, "pinned": frozenset(pinned), "stats": stats, "trace": trace, "history": hist,
-                "test_output": test_output, "forced": forced, "note": note, "calls": []}
+                "test_output": test_output, "forced": forced, "stalls": stalls, "note": note, "calls": []}
 
     def _verify(self, s: AgentState) -> dict:
         d, stats, trace = s["diagnosis"], s["stats"], list(s["trace"])

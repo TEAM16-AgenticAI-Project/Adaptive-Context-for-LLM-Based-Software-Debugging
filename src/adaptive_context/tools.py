@@ -10,6 +10,7 @@ That is not a security sandbox: only run tests from repositories you trust.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -118,6 +119,7 @@ class Tools:
                  python: str | None = None, test_cmd: str | None = None, k: int = 3, max_results: int = 6):
         self.retriever, self.repo_root, self.test_path = retriever, repo_root, test_path
         self.python, self.test_cmd, self.k, self.max_results = python, test_cmd, k, max_results
+        self._paths = None
 
     @property
     def can_run_test(self) -> bool:
@@ -150,30 +152,69 @@ class Tools:
         return {"ok": True, **run_failing_test(self.repo_root, test_path or self.test_path, timeout,
                                                python=self.python, test_cmd=self.test_cmd)}
 
-    def resolve(self, name: str) -> list:
-        """retriever.lookup, narrowed by the module path or pytest id the model passed.
+    def _repo_path(self, p: str) -> str | None:
+        """The repo file a path written by the model refers to: exact match, else a unique suffix match."""
+        if self._paths is None:
+            self._paths = sorted({c.path for c in self.retriever.chunks})
+        if p in self._paths:
+            return p
+        hits = [q for q in self._paths if q.endswith("/" + p)]
+        return hits[0] if len(hits) == 1 else None
 
-        Accepts `pkg.mod.func`, `pkg.mod.Class.method`, `path.py::Qual.name` and pytest ids
-        `tests/t.py::TestX::test_y`. If the retriever already resolves the name to one chunk this is a no-op."""
-        name = name.strip().strip("`()")
-        if name.count("::") > 1:                                # pytest id -> path::Class.method
-            path, _, rest = name.partition("::")
-            name = f"{path}::{rest.replace('::', '.')}"
-        found = self.retriever.lookup(name)
-        if len(found) <= 1:
-            return found
+    def locate(self, name: str) -> tuple:
+        """Split a name into (repo file, qualified name inside it). The file is None when the name has no module
+        part ('match', 'Cart.total'). Accepts 'path.py::Qual', pytest ids 'tests/t.py::TestX::test_y[p]',
+        'pkg.mod.Qual', 'path.py' and 'pkg.mod' (qualified name '')."""
+        name = name.strip().strip("`()").rstrip("/")
         if "::" in name:
             path, _, qual = name.partition("::")
-            keep = [c for c in found if c.path.endswith(path) and c.name == qual]
-            return keep or found
+            return self._repo_path(path), re.sub(r"\[.*\]$", "", qual.replace("::", "."))
+        if name.endswith(".py"):
+            return self._repo_path(name), ""
         parts = name.split(".")
-        for i in range(len(parts) - 1, 0, -1):                 # longest module prefix first
-            mod, qual = "/".join(parts[:i]), ".".join(parts[i:])
-            keep = [c for c in found if c.name == qual and
-                    any(c.path == m or c.path.endswith("/" + m) for m in (mod + ".py", mod + "/__init__.py"))]
-            if keep:
-                return keep
-        return found
+        for i in range(len(parts), 0, -1):                     # longest module prefix first
+            mod = "/".join(parts[:i])
+            path = self._repo_path(mod + ".py") or self._repo_path(mod + "/__init__.py")
+            if path:
+                return path, ".".join(parts[i:])
+        return None, name
+
+    def resolve(self, name: str) -> list:
+        """The function(s) a name refers to. Uses retriever.lookup, but a file or module written in the name is
+        respected: 'bash.py::Bash.from_shell' never returns another file's from_shell (it may be inherited)."""
+        name = name.strip().strip("`()")
+        found = self.retriever.lookup(name)
+        path, qual = self.locate(name)
+        if path is None:
+            return found                                        # bare or Class.method: the retriever decides
+        if not qual:
+            return []                                           # a whole file: see members()
+        exact = [c for c in self.retriever.chunks if c.path == path and c.name == qual]
+        if exact:
+            return exact
+        same = [c for c in found if c.name == qual]              # e.g. re-exported from pkg/__init__.py
+        return same if len(same) == 1 else []
+
+    def members(self, name: str) -> list:
+        """Functions in a file ('x.py', 'pkg.mod') or methods of a class ('x.py::Cls', 'pkg.mod.Cls', 'Cls')."""
+        path, qual = self.locate(name)
+        fns = [c for c in self.retriever.chunks if c.kind in ("function", "method")]
+        if path is None:
+            return [c for c in fns if "." in c.name and c.name.rsplit(".", 1)[0] == qual]
+        if not qual:
+            return [c for c in fns if c.path == path]
+        return [c for c in fns if c.path == path and c.name.startswith(qual + ".")]
+
+    def _not_found(self, value: str) -> str:
+        path, qual = self.locate(value)
+        short = (qual or value).split(".")[-1]
+        same = [c.id for c in self.retriever.lookup(short) if c.name.split(".")[-1] == short]
+        where = f" in {path}" if path else ""
+        hint = ""
+        if same:
+            hint = (f" Functions named '{short}' exist in: {', '.join(same[:5])}" + (" ..." if len(same) > 5 else "")
+                    + (" (it may be inherited from one of them)." if path and "." in qual else "."))
+        return f"no function '{qual or value}'{where}.{hint}"
 
     # --- function-calling entry point ---
     def execute(self, name: str, args: dict, exclude=frozenset()) -> ToolResult:
@@ -196,10 +237,20 @@ class Tools:
             return ToolResult(True, f"{len(hits)} new matches: " + ", ".join(c.id for c, _ in hits) if hits
                               else "no new matches", list(hits))
         found = self.resolve(value)
+        inside = [] if found else self.members(value)
+        if inside:                                          # a file or a class was passed instead of a function
+            kind = "file" if not self.locate(value)[1] else "class"
+            if name == "read_function" and len(inside) <= self.max_results:
+                found = inside
+            else:
+                names = ", ".join(c.name for c in inside[:12]) + (" ..." if len(inside) > 12 else "")
+                return ToolResult(True, f"'{value}' is a {kind} with {len(inside)} functions: {names}. Call "
+                                  f"{name} with one of them as '{inside[0].path}::<name>'.")
+        if not found:
+            return ToolResult(True, self._not_found(value))
         if name == "grep_symbol":
             more = f" (+{len(found) - 10} more)" if len(found) > 10 else ""
-            return ToolResult(True, ("defined at " + ", ".join(c.id for c in found[:10]) + more) if found
-                              else f"no function named '{value}'")
+            return ToolResult(True, "defined at " + ", ".join(c.id for c in found[:10]) + more)
         if len(found) > self.max_results:
             # Ambiguous short name (e.g. 136 functions called `match`): adding a few arbitrary ones would waste
             # budget and mislead. Ask for the module-qualified name instead.
@@ -208,8 +259,7 @@ class Tools:
                               f"(e.g. {', '.join(c.id for c in found[:3])}). Call again with the module path, "
                               f"e.g. 'pkg.module.{value.split('.')[-1]}' as imported by the test, or 'path.py::name'.")
         if name == "read_function":
-            return ToolResult(True, ("added " + ", ".join(c.id for c in found)) if found
-                              else f"no function named '{value}'", [(c, 0.0) for c in found], pin=True)
+            return ToolResult(True, "added " + ", ".join(c.id for c in found), [(c, 0.0) for c in found], pin=True)
         if name == "get_callees":
             out = [c for ch in found for c in self.retriever.callees(ch)][: self.max_results]
         else:

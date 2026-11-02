@@ -148,6 +148,114 @@ def test_agent_verifier_feeds_back_a_failing_fix_once():
     assert res2.stop_reason == "verify_failed"
 
 
+def test_rejected_tool_call_is_recovered_not_fatal():
+    """Live thefuck-5: with only diagnose offered, the model called read_function and Groq answered HTTP 400."""
+    class Rejecting(ToolScript):
+        def chat(self, messages, tools=None, tool_choice=None):
+            if not self.seen:
+                self.seen.append({"tools": [t["function"]["name"] for t in tools], "choice": tool_choice,
+                                  "prompt": messages[-1]["content"]})
+                return LLMReply("", 0, 0, 0.0, [], rejected="attempted to call tool 'read_function' which was not "
+                                                            "in request.tools")
+            return super().chat(messages, tools, tool_choice)
+
+    script = Rejecting([ToolCall("diagnose", DIAG)])
+    res = _agent(script).run("checkout returns the wrong amount")
+    assert res.stop_reason == "diagnosed" and res.stats.failures == 1
+    assert "rejected" in res.trace[0] and "API rejected" in script.seen[1]["prompt"]
+
+
+def test_malformed_tool_call_is_repaired_from_the_refused_generation():
+    """Live thefuck-17: the model sent the same broken arguments 3 times at temperature 0 -> invalid_exhausted."""
+    broken = '{"name": "search_code", "arguments": {"query":"discount",""}"}'
+
+    class Broken(ToolScript):
+        def chat(self, messages, tools=None, tool_choice=None):
+            if not self.seen:
+                self.seen.append({"tools": [t["function"]["name"] for t in tools], "choice": tool_choice,
+                                  "prompt": messages[-1]["content"]})
+                return LLMReply(broken, 0, 0, 0.0, [], rejected="Failed to parse tool call arguments as JSON")
+            return super().chat(messages, tools, tool_choice)
+
+    script = Broken([ToolCall("diagnose", DIAG)])
+    res = _agent(script).run("checkout returns the wrong amount")
+    assert res.stop_reason == "diagnosed" and res.stats.tool_calls == 1 and res.stats.failures == 1
+    assert "repaired" in res.trace[0] and res.trace[0]["calls"] == [{"name": "search_code", "args": {"query": "discount"}}]
+    pytest.importorskip("langgraph")
+    from adaptive_context.agent_graph import _salvage
+    assert _salvage('{"name": "read_function", "arguments": {"name": "a.b"}}', [DIAGNOSE_SCHEMA]) == []   # not offered
+    assert _salvage('{"name": "diagnose", "arguments": {"file": "x.py"}}', [DIAGNOSE_SCHEMA]) == []       # incomplete
+
+
+def test_groq_tool_use_failed_becomes_a_rejected_reply(monkeypatch):
+    import io
+    import urllib.error
+
+    from adaptive_context.llm import GroqLLM
+    body = (b'{"error":{"message":"Tool call validation failed: attempted to call tool \'read_function\' which was '
+            b'not in request.tools","type":"invalid_request_error","code":"tool_use_failed",'
+            b'"failed_generation":"{\\"name\\": \\"read_function\\"}"}}')
+
+    def refuse(*a, **k):
+        raise urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(body))
+
+    monkeypatch.setattr("urllib.request.urlopen", refuse)
+    reply = GroqLLM(api_key="x").chat([{"role": "user", "content": "hi"}], tools=[DIAGNOSE_SCHEMA])
+    assert reply.tool_calls == [] and "not in request.tools" in reply.rejected and "read_function" in reply.text
+
+
+def test_a_lookup_miss_gets_one_more_round_before_forcing():
+    script = ToolScript([ToolCall("read_function", {"name": "no_such_function"}),
+                         ToolCall("read_function", {"name": "apply_discount"}), ToolCall("diagnose", DIAG)])
+    res = _agent(script).run("checkout returns the wrong amount")
+    assert "read_function" in script.seen[1]["tools"] and "found nothing" in script.seen[1]["prompt"]
+    assert res.stop_reason == "diagnosed" and res.stats.tool_calls == 2
+
+    repeats = ToolScript([ToolCall("search_code", {"query": "checkout returns the wrong amount"}),
+                          ToolCall("diagnose", DIAG)])
+    _agent(repeats, initial_k=10).run("checkout returns the wrong amount")
+    assert repeats.seen[1]["tools"] == ["diagnose"]                  # nothing new and nothing missed: done searching
+
+
+def test_read_function_on_a_file_path_returns_its_functions():
+    files = {"pkg/rules/git_push.py": "def match(c):\n    return 1\n\n\ndef get_new_command(c):\n    return 2\n",
+             "pkg/rules/other.py": "def match(c):\n    return 3\n"}
+    t = Tools(_retriever(files))
+    for name in ("pkg/rules/git_push.py", "pkg.rules.git_push"):
+        res = t.execute("read_function", {"name": name})
+        assert res.pin and sorted(c.id for c, _ in res.chunks) == ["pkg/rules/git_push.py::get_new_command",
+                                                                  "pkg/rules/git_push.py::match"]
+    big = Tools(_retriever({"pkg/big.py": "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(9))}))
+    res = big.execute("read_function", {"name": "pkg/big.py"})
+    assert res.chunks == [] and "is a file with 9 functions" in res.summary
+
+
+SHELLS = {"pkg/shells/generic.py": "class Generic:\n    def from_shell(self, c):\n        return c\n",
+          "pkg/shells/fish.py": "class Fish(Generic):\n    def from_shell(self, c):\n        return c + 'f'\n",
+          "pkg/shells/bash.py": "class Bash(Generic):\n    def app_alias(self, n):\n        return n\n\n"
+                                "    def get_aliases(self):\n        return {}\n",
+          "pkg/types.py": "class Settings(dict):\n    def update(self, **kw):\n        return Settings(kw)\n\n"
+                          "    def __getattr__(self, k):\n        return self.get(k)\n",
+          "tests/test_bash.py": "class TestBash:\n    def test_from_shell(self, x):\n        assert x\n"}
+
+
+def test_an_explicit_file_is_respected_and_inheritance_is_hinted():
+    """Live thefuck-17: 'bash.py::Bash.from_shell' (inherited) used to return Fish/Generic.from_shell as if found."""
+    res = Tools(_retriever(SHELLS)).execute("read_function", {"name": "pkg/shells/bash.py::Bash.from_shell"})
+    assert res.chunks == [] and "no function 'Bash.from_shell' in pkg/shells/bash.py" in res.summary
+    assert "pkg/shells/generic.py::Generic.from_shell" in res.summary and "inherited" in res.summary
+
+
+def test_a_class_name_returns_its_methods():
+    """Live thefuck-29: read_function('thefuck/types.py::Settings') found nothing; the bug was in Settings.update."""
+    t = Tools(_retriever(SHELLS))
+    for name in ("pkg/types.py::Settings", "pkg.types.Settings", "Settings"):
+        assert sorted(c.id for c, _ in t.execute("read_function", {"name": name}).chunks) == \
+            ["pkg/types.py::Settings.__getattr__", "pkg/types.py::Settings.update"], name
+    assert [c.id for c, _ in t.execute("read_function", {"name": "tests/test_bash.py::TestBash::test_from_shell[x]"})
+            .chunks] == ["tests/test_bash.py::TestBash.test_from_shell"]
+
+
 def test_agent_pins_the_failing_test_named_in_the_report():
     res = _agent(ToolScript([ToolCall("diagnose", DIAG)])).run(
         "The test `test_payment.py::test_checkout_with_discount` fails.")

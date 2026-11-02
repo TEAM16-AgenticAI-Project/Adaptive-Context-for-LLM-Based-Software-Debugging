@@ -11,6 +11,7 @@ import argparse
 import importlib
 import json
 import sys
+import warnings
 
 from .adaptive import AdaptiveDebugger
 from .baseline import StaticRAG
@@ -94,6 +95,8 @@ def _debug(a) -> int:
 
 
 def main(argv=None) -> int:
+    # old repos (e.g. thefuck) contain regexes like '\(' that newer Pythons warn about while parsing; not our code
+    warnings.filterwarnings("ignore", category=SyntaxWarning)
     ap = argparse.ArgumentParser(prog="adaptive-context")
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("debug", help="debug a repository from a bug report")

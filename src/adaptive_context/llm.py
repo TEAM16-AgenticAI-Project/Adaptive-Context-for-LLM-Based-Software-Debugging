@@ -18,6 +18,15 @@ class LLMError(RuntimeError):
     pass
 
 
+class ToolCallRejected(LLMError):
+    """The provider refused the model's tool call (e.g. Groq `tool_use_failed`: a tool that was not offered, or
+    arguments that do not match the schema). Recoverable: the agent treats it as an invalid reply."""
+
+    def __init__(self, message: str, generation: str = ""):
+        super().__init__(message)
+        self.generation = generation
+
+
 @dataclass
 class ToolCall:
     name: str
@@ -32,6 +41,7 @@ class LLMReply:
     output_tokens: int
     latency_s: float
     tool_calls: list = field(default_factory=list)   # [ToolCall]
+    rejected: str = ""                                 # provider's reason when it refused the tool call
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -56,6 +66,14 @@ def _parse_tool_calls(message: dict) -> list:
             args = {"__invalid_json__": str(raw)[:500]}
         out.append(ToolCall(str(fn.get("name", "")), args if isinstance(args, dict) else {}, str(tc.get("id", ""))))
     return out
+
+
+def _error_body(raw: bytes) -> dict:
+    try:
+        err = json.loads(raw).get("error", {})
+        return err if isinstance(err, dict) else {}
+    except (ValueError, AttributeError):
+        return {}
 
 
 class GroqLLM:
@@ -89,7 +107,12 @@ class GroqLLM:
                     data = json.loads(resp.read())
                 return data, time.time() - t0
             except urllib.error.HTTPError as e:
-                detail = e.read()[:300]
+                raw = e.read()
+                detail = raw[:300]
+                if e.code == 400 and (b"tool_use_failed" in raw or b"Tool call validation failed" in raw):
+                    err = _error_body(raw)
+                    raise ToolCallRejected(str(err.get("message", detail))[:300],
+                                           str(err.get("failed_generation", ""))[:2000]) from e
                 if e.code == 400 and sent_effort and b"reasoning" in detail:
                     sent_effort = False              # model/endpoint does not accept the parameter: retry without it
                     continue
@@ -114,7 +137,12 @@ class GroqLLM:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice or "auto"
-        data, latency = self._post(payload)
+        t0 = time.time()
+        try:
+            data, latency = self._post(payload)
+        except ToolCallRejected as e:
+            # The refused generation often still holds a usable answer (e.g. a diagnose call in text form).
+            return LLMReply(e.generation, 0, 0, time.time() - t0, [], rejected=str(e))
         usage = data.get("usage", {})
         message = (data.get("choices") or [{}])[0].get("message") or {}
         return LLMReply(message.get("content") or "", usage.get("prompt_tokens", 0),
