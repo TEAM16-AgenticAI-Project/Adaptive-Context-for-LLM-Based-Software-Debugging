@@ -31,7 +31,8 @@ DEFAULT_MAX_TOKENS = 4096
 REVIEWED_REVISION = "c545608474b62e5635d240c49a790703e687848e"
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _HEADINGS = re.compile(
-    r"^[ \t]*(Evidence considered|Conclusion|Relevant file|Function|Suggested change|Explanation):[ \t]*([^\n]*)$",
+    r"^[ \t]*(?:\*\*)?(Evidence considered|Conclusion|Relevant file|Function|Suggested change|Explanation)"
+    r"(?:\*\*)?:(?:\*\*)?[ \t]*([^\n]*)$",
     re.MULTILINE | re.IGNORECASE)
 
 # Executed by the child interpreter before the original src/baseline.py. No
@@ -85,7 +86,7 @@ def read_key_file(path: str) -> str:
 
 
 def parse_output(output: str) -> Diagnosis:
-    text = _ANSI.sub("", output).replace("**", "")
+    text = _ANSI.sub("", output)
     text = "\n".join(re.sub(r"^\s*│ ?", "", line).removesuffix("│").rstrip() for line in text.splitlines())
     matches = list(_HEADINGS.finditer(text))
     sections = {}

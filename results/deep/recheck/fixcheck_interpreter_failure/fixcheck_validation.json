@@ -1,0 +1,65 @@
+{
+  "revision": {
+    "commit": "018a61bfd134e7b74059023d0dde5ba09229ed56",
+    "src_dirty": false
+  },
+  "cases": 32,
+  "gold_passed": 0,
+  "negative_rejected": 32,
+  "negative_reasons": [
+    "no_change"
+  ],
+  "baseline_failed": 32,
+  "all_ok": 0,
+  "by_form": {
+    "function": {
+      "cases": 22,
+      "gold_passed": 0
+    },
+    "diff": {
+      "cases": 10,
+      "gold_passed": 0
+    }
+  },
+  "by_why": {
+    "imports+function": 2,
+    "module_level": 2,
+    "multi_file": 2,
+    "multi_function": 6,
+    "single_function": 20
+  },
+  "not_ok": [
+    "thefuck-1",
+    "thefuck-2",
+    "thefuck-3",
+    "thefuck-4",
+    "thefuck-5",
+    "thefuck-6",
+    "thefuck-7",
+    "thefuck-8",
+    "thefuck-9",
+    "thefuck-10",
+    "thefuck-11",
+    "thefuck-12",
+    "thefuck-13",
+    "thefuck-14",
+    "thefuck-15",
+    "thefuck-16",
+    "thefuck-17",
+    "thefuck-18",
+    "thefuck-19",
+    "thefuck-20",
+    "thefuck-21",
+    "thefuck-22",
+    "thefuck-23",
+    "thefuck-24",
+    "thefuck-25",
+    "thefuck-26",
+    "thefuck-27",
+    "thefuck-28",
+    "thefuck-29",
+    "thefuck-30",
+    "thefuck-31",
+    "thefuck-32"
+  ]
+}

@@ -1,0 +1,2 @@
+Latest-main integration gate (captured pytest output excerpt)
+151 passed in 16.57s

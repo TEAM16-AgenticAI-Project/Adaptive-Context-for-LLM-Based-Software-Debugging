@@ -1,7 +1,16 @@
 # Deep — Milestone 2 handoff
 
-Work is on `deep/datasets-baselines` in the TEAM16 Agentic AI repository.
+The original implementation on `deep/datasets-baselines` was merged in
+[PR #7](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/7).
+Integration fixes and verification are on `deep/verification-recheck` in
+[PR #10](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/10).
 This contribution covers Deep's assigned area in `docs/m2_tasks/deep.md`.
+
+The [integration recheck](../../results/deep/recheck/README.md) records offline
+validation after merging Tanay's main-branch changes, including both
+shared CLI actions and the virtualenv interpreter regression.
+The [final command checks](../../results/deep/final_check/README.md) run both
+actions and the controlled-case validator on the latest pushed source revision.
 
 ## Completed
 
@@ -43,10 +52,18 @@ comparison, final integrated demonstration, stakeholder meeting and group report
 assembly still belong to the team owners.
 
 The native Chroma failure must be reviewed with Yadnesh before presenting the
-last-definition variant as production behavior. Tanay can add his
-`--validate-fixcheck` dispatcher to `bench/audit.py`: Deep's action is isolated in
-`run_audit(...)` and the existing `--audit` option/schema must remain compatible.
-Tanay's GitHub handle and actual non-code contributions still need confirmation.
+last-definition variant as production behavior. Main `dc5eafd` is now integrated,
+including Karthik's baseline fixes and systems factory:
+`bench/audit.py` supports both `--audit` and Tanay's `--validate-fixcheck`, preserving
+both helper/result interfaces. The verifier also accepts `--repo-root`, and the
+shared CLI makes interpreter paths absolute without dereferencing virtualenv
+symlinks before running temporary copies.
+Tanay's handle is `Tanay126`; final non-code contributions still need his confirmation.
+
+The integration recheck also preserves Python `**` operators while parsing bold
+response headings and scores duplicate hits at their first rank. The stakeholder
+capture hook is tested through a real offline child process using a fake provider;
+this is an integration test, not a live Groq result.
 
 ## Quick checks
 
@@ -55,21 +72,28 @@ From an installed development environment:
 ```bash
 pytest -q
 ruff check src tests
-python -m adaptive_context.bench.controlled --out results/deep/controlled
-python -m adaptive_context.bench.audit --audit --manifest data/controlled/cases.jsonl --out results/deep/controlled_audit
+python -m adaptive_context.bench.controlled --out results/local/deep/controlled
+python -m adaptive_context.bench.audit --audit --manifest data/controlled/cases.jsonl --out results/local/deep/controlled_audit
 ```
 
 For a fresh checkout, install `.[dev,agent,chroma]` using Python 3.12 and follow
 `scripts/setup_env.sh` for the Python 3.8 environments/project checkouts. That
 script regenerates the supplied real manifest, including its traceback text.
+Keep reruns under `results/local/` so the published evidence is preserved.
+On this Mac, hidden flags on virtualenv `.pth` files prevented Python from
+loading the editable package, although pytest's configured source path worked.
+A regular installation restored the commands:
+`uv pip install --python .venv/bin/python --reinstall-package adaptive-context '.[dev,agent]'`.
+When using this fallback, reinstall after source changes and supply explicit
+manifest/output paths to the commands below.
 **Preserve the original report text before setup** for exact query comparisons:
 
 ```bash
 cp data/real/thefuck.jsonl /tmp/team16-thefuck-inputs.jsonl
 # Now run the existing setup script using the development interpreter.
-python -m adaptive_context.bench.audit --audit --manifest /tmp/team16-thefuck-inputs.jsonl --repo-root data/real --out results/deep/audit
-python -m adaptive_context.bench.audit --audit --chroma --manifest /tmp/team16-thefuck-inputs.jsonl --repo-root data/real --out results/deep/retrievers
-python -m adaptive_context.bench.audit --audit --chroma --deduplicate-chunks --manifest /tmp/team16-thefuck-inputs.jsonl --repo-root data/real --out results/deep/retrievers_deduplicated
+python -m adaptive_context.bench.audit --audit --manifest /tmp/team16-thefuck-inputs.jsonl --repo-root data/real --out results/local/deep/audit
+python -m adaptive_context.bench.audit --audit --chroma --manifest /tmp/team16-thefuck-inputs.jsonl --repo-root data/real --out results/local/deep/retrievers
+python -m adaptive_context.bench.audit --audit --chroma --deduplicate-chunks --manifest /tmp/team16-thefuck-inputs.jsonl --repo-root data/real --out results/local/deep/retrievers_deduplicated
 ```
 
 The original Chroma command is expected to exit nonzero on the affected
@@ -108,5 +132,6 @@ Full-function grounding is conservative because an 80-line window can truncate
 a longer function.
 
 Keep the full conversation/export as the course interaction trace. Deep's
-disclosure is appended to `docs/AI_ASSISTANCE.md`. The group still needs a peer
-review and merge, a final rerun on the merged source, and one final submission.
+disclosure is appended to `docs/AI_ASSISTANCE.md`. PR #10 still needs a teammate's
+review and merge, followed by the team's final evaluation on merged main and one
+final submission.

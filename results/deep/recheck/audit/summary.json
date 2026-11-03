@@ -1,0 +1,43 @@
+{
+  "revision": "018a61bfd134e7b74059023d0dde5ba09229ed56",
+  "manifest": "data/real/thefuck.jsonl",
+  "repo_root": "data/reproduced",
+  "manifest_sha256": "905820e582f99bf8dc71a4248135eddaaa5c93f1730fa5cfee9d52aea9489f44",
+  "python": "3.12.14",
+  "llm_calls": 0,
+  "deduplicated": false,
+  "deduplication_rule": "None",
+  "definitions": {
+    "hit_at_k": "at least one evaluator gold function in first k retrieved chunks",
+    "all_at_k": "all evaluator gold functions in first k chunks",
+    "imports": "direct syntactic imports only; conditional imports counted, transitive imports not inferred",
+    "traceback": "gold relative path explicitly mentioned in manifest failing-test output, not a fresh test run"
+  },
+  "attempted": 32,
+  "processed": 32,
+  "errors": 0,
+  "retrievers": {
+    "bm25": {
+      "n": 32,
+      "hit_at_3": 0.34375,
+      "hit_at_10": 0.59375,
+      "all_at_3": 0.25,
+      "all_at_10": 0.5
+    }
+  },
+  "test_output_names_gold_file": {
+    "observed": 32,
+    "yes": 10,
+    "rate": 0.3125
+  },
+  "test_imports_gold_module": {
+    "observed": 32,
+    "yes": 28,
+    "rate": 0.875
+  },
+  "name_ambiguity": {
+    "labels": 40,
+    "median": 69.0,
+    "max": 154
+  }
+}

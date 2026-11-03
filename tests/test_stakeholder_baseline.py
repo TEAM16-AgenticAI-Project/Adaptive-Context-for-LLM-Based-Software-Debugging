@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
+import shutil
 import subprocess
 from types import SimpleNamespace
+
+import pytest
 
 from adaptive_context.bench import stakeholder_baseline as baseline
 from adaptive_context.cases import RealCase
@@ -40,6 +43,12 @@ def test_parser_rejects_missing_file_and_truncated_function():
     assert not baseline.parse_output("diagnose: checkout").valid
     assert not baseline.parse_output(SAMPLE.replace("def checkout(price):", "def checkout(")).valid
     assert not baseline.parse_output(SAMPLE.replace("payment.py", "unknown")).valid
+
+
+def test_parser_preserves_python_exponentiation_and_bold_headings():
+    text = SAMPLE.replace("return price * 0.8", "return price ** 2").replace("Relevant file:", "**Relevant file:**")
+    result = baseline.parse_output(text)
+    assert result.valid and "return price ** 2" in result.fix
 
 
 def test_actual_command_contains_only_buggy_repo_and_report(tmp_path, monkeypatch):
@@ -144,3 +153,31 @@ def test_capture_hook_preserves_prompt_and_captures_model_output(tmp_path, monke
     assert calls == [prompt] and captured["raw_response"] == SAMPLE
     assert captured["usage"]["total_tokens"] == 60
     assert captured["selected_chunks"] == [{"path": "payment.py", "start": 1, "end": 2}]
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="the upstream CLI uses uv")
+def test_capture_works_in_a_real_child_process_without_a_model(tmp_path, monkeypatch):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    source = upstream / "src"
+    source.mkdir(parents=True)
+    (source / "context_builder.py").write_text(
+        'class DebuggingContextBuilder:\n'
+        '    def build_prompt(self, bug_report, chunks):\n'
+        '        return "original-prompt:" + bug_report\n')
+    (source / "terminal_ui.py").write_text('class TerminalUI:\n    pass\n')
+    (source / "baseline.py").write_text(
+        'from types import SimpleNamespace as S\n'
+        'from context_builder import DebuggingContextBuilder\n'
+        'from terminal_ui import TerminalUI\n'
+        'from pathlib import Path\nimport sys\n'
+        'report = (Path(sys.argv[1]) / "bug_report.txt").read_text()\n'
+        'prompt = DebuggingContextBuilder().build_prompt(report, [S(source_path="payment.py", start_line=1, end_line=2)])\n'
+        f'provider = S(generate=lambda p: S(text={SAMPLE!r}, input_tokens=40, output_tokens=20, total_tokens=60))\n'
+        'TerminalUI().generate_response(provider, prompt)\n')
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    result = baseline.run_case(case, str(upstream), timeout=30)
+    assert result["status"] == "ok", result
+    assert result["metrics"]["grounded"] and result["usage"]["total_tokens"] == 60
+    assert result["prompt_sha256"]

@@ -1,0 +1,13 @@
+{
+  "source_revision": "f1d3bf066a00bda7d4698511c0b8a38a3f5a9730",
+  "main_integrated": "dc5eafd",
+  "pytest_passed": 151,
+  "ruff": "passed",
+  "real_bug_check_source": "1213d87",
+  "real_cases_gold_passed": 32,
+  "negative_controls_rejected": 32,
+  "controlled_passed": 8,
+  "clean_install_check_source": "1213d87",
+  "clean_install_tests_passed": 144,
+  "live_groq": "not_run; no key supplied"
+}
