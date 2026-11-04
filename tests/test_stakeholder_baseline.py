@@ -113,6 +113,31 @@ def test_error_output_redacts_key_and_never_scores_as_success(tmp_path, monkeypa
     assert timed["reason"] == "TimeoutExpired"
 
 
+@pytest.mark.parametrize("stdout,stderr", [
+    ("partial test-secret", "failure test-secret"),
+    (b"partial test-secret\xff", b"failure test-secret"),
+    (None, None),
+])
+def test_timeout_preserves_redacted_partial_diagnostics(tmp_path, monkeypatch, stdout, stderr):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+
+    def execute(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, 1, output=stdout, stderr=stderr)
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["reason"] == "TimeoutExpired"
+    assert result["metrics"] is None and "test-secret" not in json.dumps(result)
+    if stdout is None:
+        assert result["stdout"] == result["stderr"] == ""
+    else:
+        assert "partial <redacted>" in result["stdout"]
+        assert result["stderr"] == "failure <redacted>"
+
+
 @pytest.mark.parametrize("payload", [
     None,
     {"raw_response": 17},

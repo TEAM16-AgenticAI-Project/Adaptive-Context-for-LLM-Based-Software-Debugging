@@ -86,6 +86,12 @@ def read_key_file(path: str) -> str:
     return ""
 
 
+def _redact_output(output: str | bytes | None, key: str) -> str:
+    # TimeoutExpired can contain bytes even when the process used text=True.
+    text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output or ""
+    return text.replace(key, "<redacted>") if key else text
+
+
 def parse_output(output: str) -> Diagnosis:
     text = _ANSI.sub("", output)
     text = "\n".join(re.sub(r"^\s*│ ?", "", line).removesuffix("│").rstrip() for line in text.splitlines())
@@ -185,18 +191,22 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
             result = execute(command, cwd=root, env=env, capture_output=True, text=True, timeout=timeout,
                              stdin=subprocess.DEVNULL)
             captured = _read_capture(capture_file)
-            raw = captured.get("raw_response", result.stdout).replace(key, "<redacted>")
+            raw = _redact_output(captured.get("raw_response", result.stdout), key)
             diagnosis = parse_output(raw)
             items = context_items(str(repo), captured.get("selected_chunks", []))
             status = "ok" if result.returncode == 0 and diagnosis.valid else "error"
             return {**record, "status": status, "reason": "" if status == "ok" else "process_or_parse_failure",
                     "returncode": result.returncode, "wall_s": time.perf_counter() - started,
-                    "raw_response": raw, "stdout": result.stdout.replace(key, "<redacted>"),
-                    "stderr": result.stderr.replace(key, "<redacted>"), "diagnosis": asdict(diagnosis),
+                    "raw_response": raw, "stdout": _redact_output(result.stdout, key),
+                    "stderr": _redact_output(result.stderr, key), "diagnosis": asdict(diagnosis),
                     "selected_chunks": captured.get("selected_chunks", []), "context_items": items,
                     "usage": captured.get("usage"), "prompt_sha256": captured.get("prompt_sha256"),
                     "metrics": score_diagnosis(case, diagnosis, items) if status == "ok" else None}
-        except (subprocess.TimeoutExpired, OSError, ValueError) as error:
+        except subprocess.TimeoutExpired as error:
+            return {**record, "status": "error", "reason": type(error).__name__,
+                    "wall_s": time.perf_counter() - started, "metrics": None,
+                    "stdout": _redact_output(error.stdout, key), "stderr": _redact_output(error.stderr, key)}
+        except (OSError, ValueError) as error:
             return {**record, "status": "error", "reason": type(error).__name__,
                     "wall_s": time.perf_counter() - started, "metrics": None}
 
