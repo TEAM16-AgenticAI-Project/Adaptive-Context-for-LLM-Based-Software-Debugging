@@ -6,9 +6,11 @@ JSON/JSONL files. Source revisions are stored in each summary.
 
 The [integration recheck](recheck/README.md) preserves both the evidence
 audit and Tanay's verifier on one branch and includes a clean-checkout gate.
-The latest [command checks](final_check/README.md) rerun both CLI actions and
+The [November 1 command checks](final_check/README.md) rerun both CLI actions and
 controlled validation on committed revision `9af7cc9`, after repairing the local
 package installation.
+The latest [November 4 follow-up checks](nov4_followups/README.md) validate the
+adapter fixes and input fingerprints on main `4d7c241` plus Deep's new commits.
 
 | Artifact | Scope and producing revision |
 | --- | --- |
