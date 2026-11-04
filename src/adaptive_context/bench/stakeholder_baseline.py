@@ -121,6 +121,25 @@ def context_items(repo: str, selected: list) -> list:
         for window in selected)]
 
 
+def _read_capture(path: Path) -> dict:
+    """Reject malformed child-process data before parsing or grounding it."""
+    if not path.exists():
+        return {}
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(captured, dict) or not isinstance(captured.get("raw_response"), str):
+        raise ValueError("capture must contain a text raw_response")
+    windows = captured.get("selected_chunks", [])
+    if not isinstance(windows, list):
+        raise ValueError("selected_chunks must be a list")
+    for window in windows:
+        if not isinstance(window, dict) or not isinstance(window.get("path"), str) or not window["path"]:
+            raise ValueError("captured windows must contain a path")
+        start, end = window.get("start"), window.get("end")
+        if type(start) is not int or type(end) is not int or start < 1 or end < start:
+            raise ValueError("captured windows must contain valid line bounds")
+    return captured
+
+
 def _upstream_revision(root: Path) -> str:
     try:
         return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -163,7 +182,7 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
         try:
             result = execute(command, cwd=root, env=env, capture_output=True, text=True, timeout=timeout,
                              stdin=subprocess.DEVNULL)
-            captured = json.loads(capture_file.read_text()) if capture_file.exists() else {}
+            captured = _read_capture(capture_file)
             raw = captured.get("raw_response", result.stdout).replace(key, "<redacted>")
             diagnosis = parse_output(raw)
             items = context_items(str(repo), captured.get("selected_chunks", []))

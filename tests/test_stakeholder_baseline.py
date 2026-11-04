@@ -112,6 +112,50 @@ def test_error_output_redacts_key_and_never_scores_as_success(tmp_path, monkeypa
     assert timed["reason"] == "TimeoutExpired"
 
 
+@pytest.mark.parametrize("payload", [
+    None,
+    {"raw_response": 17},
+    {"raw_response": SAMPLE, "selected_chunks": [{"path": "payment.py"}]},
+    {"raw_response": SAMPLE, "selected_chunks": [{"path": "payment.py", "start": 2, "end": 1}]},
+])
+def test_malformed_capture_is_an_execution_failure(tmp_path, monkeypatch, payload):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-real")
+
+    def execute(command, **kwargs):
+        Path(kwargs["env"]["ADAPTIVE_BASELINE_CAPTURE"]).write_text(json.dumps(payload))
+        return SimpleNamespace(stdout=SAMPLE, stderr="", returncode=0)
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["metrics"] is None
+
+
+def test_bad_capture_does_not_abort_the_remaining_cases(tmp_path, monkeypatch):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-real")
+    manifest = tmp_path / "cases.jsonl"
+    manifest.write_text("".join(json.dumps({"id": name, "repo": case.repo, "bug_report": case.bug_report}) + "\n"
+                                for name in ("bad-capture", "good-capture")))
+    calls = []
+
+    def execute(command, **kwargs):
+        calls.append(command)
+        payload = None if len(calls) == 1 else {"raw_response": SAMPLE, "selected_chunks": []}
+        Path(kwargs["env"]["ADAPTIVE_BASELINE_CAPTURE"]).write_text(json.dumps(payload))
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    result = baseline.run(str(manifest), str(upstream), str(tmp_path / "output"), execute=execute)
+    rows = [json.loads(line) for line in (tmp_path / "output/results.jsonl").read_text().splitlines()]
+    assert [row["status"] for row in rows] == ["error", "ok"]
+    assert result["measured"] == 2 and result["errors"] == result["parsed_successful"] == 1
+
+
 def test_skip_summary_keeps_unmeasured_metrics_null(tmp_path):
     case = fixture_case(tmp_path)
     manifest = tmp_path / "cases.jsonl"
