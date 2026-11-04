@@ -28,26 +28,41 @@ class ResultError(ValueError):
 
 
 def _load_one(path: str) -> dict:
-    """Load one summary.json (either bench.run or report shape) into a flat record."""
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
+    """Load one summary.json into a flat record, or None if it is not a benchmark summary.
+
+    The results tree holds summary.json files from several tools (benchmark runs,
+    dataset validations, audits). Only benchmark summaries have a 'systems' block;
+    anything else is not a results table and is skipped rather than treated as an error.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
     args = data.get("args", {})
     summary = data.get("summary", data)
-    if "systems" not in summary:
-        raise ResultError(f"{path}: no 'systems' block; not a benchmark summary")
+    if not isinstance(summary, dict) or "systems" not in summary:
+        return None
     backend = args.get("llm", "unknown")
     return {"path": path, "backend": backend, "args": args, "summary": summary}
 
 
 def load_results(results_dir: str) -> list[dict]:
-    """Load every summary.json under results_dir (recursively), sorted by path."""
+    """Load every benchmark summary.json under results_dir (recursively), sorted by path.
+
+    Files that are not benchmark summaries (for example dataset-validation summaries)
+    are skipped, so a mixed results tree does not cause an error.
+    """
     pattern = os.path.join(results_dir, "**", "summary.json")
     paths = sorted(glob.glob(pattern, recursive=True))
     # Also catch a summary.json placed directly in results_dir.
     direct = os.path.join(results_dir, "summary.json")
     if os.path.isfile(direct) and direct not in paths:
         paths.insert(0, direct)
-    return [_load_one(p) for p in paths]
+    records = [_load_one(p) for p in paths]
+    return [r for r in records if r is not None]
 
 
 def classify_backend(backend: str) -> str:
