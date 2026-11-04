@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import asdict
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -155,6 +156,7 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
     root = Path(baseline_root).resolve()
     record = {"case": case.id, "dataset": case.dataset, "system": "stakeholder_original", "model": model,
               "max_tokens": max_tokens, "top_k": 3, "status": "not_run", "metrics": None,
+              "bug_report_sha256": hashlib.sha256(case.bug_report.encode("utf-8")).hexdigest(),
               "upstream_revision": _upstream_revision(root)}
     if skip_live:
         return {**record, "reason": "Live calls explicitly skipped; no model result is claimed."}
@@ -204,6 +206,7 @@ def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, rep
         raise ValueError("limit must be positive")
     if sleep < 0:
         raise ValueError("sleep must be nonnegative")
+    manifest_hash = hashlib.sha256(Path(manifest).read_bytes()).hexdigest()
     cases = load_cases(manifest, root=repo_root)
     if len({c.id for c in cases}) != len(cases):
         raise ValueError("case IDs must be unique")
@@ -218,13 +221,16 @@ def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, rep
             try:
                 row = run_case(case, baseline_root, **kwargs)
             except (OSError, ValueError) as error:
-                row = {"case": case.id, "status": "error", "metrics": None, "reason": type(error).__name__}
+                row = {"case": case.id, "dataset": case.dataset, "system": "stakeholder_original",
+                       "bug_report_sha256": hashlib.sha256(case.bug_report.encode("utf-8")).hexdigest(),
+                       "status": "error", "metrics": None, "reason": type(error).__name__}
             rows.append(row)
             output.write(json.dumps(row) + "\n")
             output.flush()
             print(f"{case.id}: {row['status']}", flush=True)
     measured = [r for r in rows if r["status"] != "not_run"]
     summary = {"revision": revision(), "manifest": manifest, "repo_root": repo_root,
+               "manifest_sha256": manifest_hash,
                "planned": len(rows), "measured": len(measured),
                "parsed_successful": sum(r["status"] == "ok" for r in rows),
                "not_run": sum(r["status"] == "not_run" for r in rows),

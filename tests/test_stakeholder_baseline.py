@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -163,6 +164,22 @@ def test_skip_summary_keeps_unmeasured_metrics_null(tmp_path):
     result = baseline.run(str(manifest), str(tmp_path), str(tmp_path / "output"), skip_live=True)
     assert result["planned"] == result["not_run"] == 1
     assert result["measured"] == 0 and result["metrics"] is None
+
+
+def test_input_fingerprints_track_manifest_and_report_changes(tmp_path):
+    case = fixture_case(tmp_path)
+    manifest = tmp_path / "cases.jsonl"
+    hashes = []
+    for index, report in enumerate((case.bug_report, case.bug_report + " Discounts should apply.")):
+        manifest.write_text(json.dumps({"id": case.id, "repo": case.repo, "bug_report": report}) + "\n")
+        output = tmp_path / f"output-{index}"
+        summary = baseline.run(str(manifest), str(tmp_path), str(output), skip_live=True)
+        row = json.loads((output / "results.jsonl").read_text())
+        assert summary["manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+        assert row["bug_report_sha256"] == hashlib.sha256(report.encode("utf-8")).hexdigest()
+        assert row["status"] == "not_run" and summary["metrics"] is None
+        hashes.append((summary["manifest_sha256"], row["bug_report_sha256"]))
+    assert hashes[0][0] != hashes[1][0] and hashes[0][1] != hashes[1][1]
 
 
 def test_context_requires_complete_function_window(tmp_path):
