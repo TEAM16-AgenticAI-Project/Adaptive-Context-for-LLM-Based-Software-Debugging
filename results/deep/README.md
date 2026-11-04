@@ -11,6 +11,8 @@ controlled validation on committed revision `9af7cc9`, after repairing the local
 package installation.
 The latest [November 4 follow-up checks](nov4_followups/README.md) validate the
 adapter fixes and input fingerprints on main `4d7c241` plus Deep's new commits.
+The [timeout follow-up](nov4_timeout/README.md) adds committed-source regression
+evidence for preserving redacted diagnostics from interrupted stakeholder runs.
 
 | Artifact | Scope and producing revision |
 | --- | --- |

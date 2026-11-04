@@ -28,6 +28,10 @@ record validation of the current adapter fixes against the newer merged main.
   Follow-up fixes preserve explicit function names when a suggested patch also
   defines helpers, reject malformed capture payloads without aborting the batch,
   and record manifest/report hashes for future evaluation comparisons.
+  Timeout failures also retain redacted partial stdout/stderr, including byte
+  output, while keeping their status as errors and their metrics null.
+  [Timeout regression evidence](../../results/deep/nov4_timeout/README.md)
+  records the committed implementation and subsequent checks.
 - Eight controlled multi-file fixtures, manifests and gold patches outside the
   indexed repos. Validation demonstrates actual test failure before and passing
   after each gold patch without changing the original buggy files.
