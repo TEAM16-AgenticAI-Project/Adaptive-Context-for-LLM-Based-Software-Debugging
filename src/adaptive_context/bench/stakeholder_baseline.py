@@ -103,7 +103,7 @@ def parse_output(output: str) -> Diagnosis:
     try:
         tree = ast.parse(textwrap.dedent(fix))
         definitions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        if definitions:
+        if definitions and not function:
             function = definitions[0].name
         elif tree.body and not function:
             function = "<module>"

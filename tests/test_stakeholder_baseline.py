@@ -51,6 +51,15 @@ def test_parser_preserves_python_exponentiation_and_bold_headings():
     assert result.valid and "return price ** 2" in result.fix
 
 
+@pytest.mark.parametrize("function", ["checkout", "Checkout.checkout"])
+def test_parser_preserves_explicit_function_when_fix_includes_helper(function):
+    text = SAMPLE.replace("Relevant file:", f"Function: `{function}`\n\nRelevant file:")
+    text = text.replace("def checkout(price):", "def normalize(price):\n    return price\n\ndef checkout(price):")
+    result = baseline.parse_output(text)
+    assert result.valid and result.function == function
+    assert "def normalize" in result.fix and "def checkout" in result.fix
+
+
 def test_actual_command_contains_only_buggy_repo_and_report(tmp_path, monkeypatch):
     case = fixture_case(tmp_path)
     upstream = tmp_path / "upstream"
