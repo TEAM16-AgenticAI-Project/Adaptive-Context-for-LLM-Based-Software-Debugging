@@ -1,0 +1,31 @@
+{
+  "checked_on": "2026-11-04",
+  "source_revision": "a0ac9cc89cdc2efd977a7e7c6bab31972a2b3009",
+  "source_dirty": false,
+  "checks": {
+    "pytest": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "returncode": 0,
+      "wall_seconds": 17.88,
+      "output": "results/deep/nov4_timeout/pytest.txt"
+    },
+    "ruff": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/ruff",
+        "check",
+        "src",
+        "tests"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.05,
+      "output": "results/deep/nov4_timeout/ruff.txt"
+    }
+  },
+  "live_groq": "not_run",
+  "scope": "Timeout diagnostics and regression suite; earlier dataset/retriever/fix-check experiments remain separately pinned."
+}

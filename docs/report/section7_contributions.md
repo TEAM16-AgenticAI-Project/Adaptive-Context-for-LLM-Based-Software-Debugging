@@ -3,9 +3,10 @@
 Repository: [TEAM16-AgenticAI-Project / Adaptive-Context-for-LLM-Based-Software-Debugging](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging).
 Deep's original contribution on `deep/datasets-baselines` was merged through
 [PR #7](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/7).
-Follow-up integration fixes and verification are on `deep/verification-recheck`
-in [PR #10](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/10),
-incorporating main `dc5eafd` (Tanay's verifier and Karthik's baseline/factory changes).
+Follow-up integration fixes and verification were merged through
+[PR #10](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/10).
+The current [adapter follow-ups](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/tree/deep/m2-evidence-followups)
+are based on main `4d7c241`, which also includes Karthik's real-case runner (PR #11).
 Experiment files record their producing commits individually; the
 group must record the final merged submission commit after review and the final
 evaluation. The repository was public when checked on November 1, 2026.
@@ -17,6 +18,12 @@ evaluation. The repository was public when checked on November 1, 2026.
 | Yadnesh Deshpande / `yashpy` | Initial context-management system; import-aware lookup, budget/pinning/compression changes; ablation and ambiguity tooling; failure-analysis draft. | [Initial system](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/commit/6ffa0c0), [import resolution](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/commit/17a04fd), [PR #3](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/3). | Context experiments and Section 5 failure-1 work supported by the associated scripts/draft. |
 | Karthik Venkata Sai Reddy Kunduru / `kkundur1` | Benchmark aggregation, Markdown/JSON results reporting and history-based contribution generator. | [Results reporting](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/commit/a3eb2bb), [aggregation](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/commit/75daf83), [PR #4](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/4). | Full matched evaluation, Section 3 and final report assembly assigned; distinguish the final runs from earlier simulator tables. |
 | Tanay Parikh / `Tanay126` | Real-repository fix checker, maintainer/negative-control validation, integrated agent verification test, case study and failure-analysis draft. | [Fix checker](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/commit/f12d56f), [validation CLI](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/commit/ea5365d), [PR #6](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/6). | Validation artifacts and Sections 4/5 are merged. Confirm final slide and other non-code contributions with Tanay. |
+
+Deep's November 4 follow-ups preserve explicitly diagnosed function names,
+validate captured response/window data while allowing later cases to continue,
+and fingerprint evaluation manifests and bug reports. Each implementation change
+has regression coverage and is committed under Deep's configured author identity;
+the dated evidence directory records its producing revision.
 
 The table describes work rather than using commit counts as a proxy for effort.
 [The generated history inventory](../../results/deep/contributions.md) supports

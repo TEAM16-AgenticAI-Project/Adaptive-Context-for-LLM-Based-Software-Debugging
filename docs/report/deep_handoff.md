@@ -2,15 +2,19 @@
 
 The original implementation on `deep/datasets-baselines` was merged in
 [PR #7](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/7).
-Integration fixes and verification are on `deep/verification-recheck` in
+Integration fixes and verification were merged on November 3 through
 [PR #10](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/10).
+The current follow-up branch is `deep/m2-evidence-followups`, based on main
+`4d7c241`, including Karthik's real-case runner from PR #11.
 This contribution covers Deep's assigned area in `docs/m2_tasks/deep.md`.
 
 The [integration recheck](../../results/deep/recheck/README.md) records offline
 validation after merging Tanay's main-branch changes, including both
 shared CLI actions and the virtualenv interpreter regression.
-The [final command checks](../../results/deep/final_check/README.md) run both
-actions and the controlled-case validator on the latest pushed source revision.
+The [November 1 command checks](../../results/deep/final_check/README.md) run both
+actions and the controlled-case validator on their recorded source revision.
+The [November 4 follow-up checks](../../results/deep/nov4_followups/README.md)
+record validation of the current adapter fixes against the newer merged main.
 
 ## Completed
 
@@ -21,6 +25,13 @@ actions and the controlled-case validator on the latest pushed source revision.
   capture, the larger recorded output allowance, error/timeout handling and
   explicit `not_run` behavior. It copies only the buggy repo and report; gold and
   source metadata remain in the evaluator. `.env` is read as data for live use.
+  Follow-up fixes preserve explicit function names when a suggested patch also
+  defines helpers, reject malformed capture payloads without aborting the batch,
+  and record manifest/report hashes for future evaluation comparisons.
+  Timeout failures also retain redacted partial stdout/stderr, including byte
+  output, while keeping their status as errors and their metrics null.
+  [Timeout regression evidence](../../results/deep/nov4_timeout/README.md)
+  records the committed implementation and subsequent checks.
 - Eight controlled multi-file fixtures, manifests and gold patches outside the
   indexed repos. Validation demonstrates actual test failure before and passing
   after each gold patch without changing the original buggy files.
@@ -52,8 +63,8 @@ comparison, final integrated demonstration, stakeholder meeting and group report
 assembly still belong to the team owners.
 
 The native Chroma failure must be reviewed with Yadnesh before presenting the
-last-definition variant as production behavior. Main `dc5eafd` is now integrated,
-including Karthik's baseline fixes and systems factory:
+last-definition variant as production behavior. Main `4d7c241` is now integrated,
+including Karthik's baseline fixes, systems factory and real-case runner:
 `bench/audit.py` supports both `--audit` and Tanay's `--validate-fixcheck`, preserving
 both helper/result interfaces. The verifier also accepts `--repo-root`, and the
 shared CLI makes interpreter paths absolute without dereferencing virtualenv
@@ -132,6 +143,6 @@ Full-function grounding is conservative because an 80-line window can truncate
 a longer function.
 
 Keep the full conversation/export as the course interaction trace. Deep's
-disclosure is appended to `docs/AI_ASSISTANCE.md`. PR #10 still needs a teammate's
-review and merge, followed by the team's final evaluation on merged main and one
-final submission.
+disclosure is appended to `docs/AI_ASSISTANCE.md`. The current follow-up branch
+needs a teammate's review and merge, followed by the team's final evaluation on
+merged main and one final submission.

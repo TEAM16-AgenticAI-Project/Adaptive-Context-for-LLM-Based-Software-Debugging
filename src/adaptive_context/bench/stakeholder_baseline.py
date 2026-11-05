@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import asdict
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -85,6 +86,12 @@ def read_key_file(path: str) -> str:
     return ""
 
 
+def _redact_output(output: str | bytes | None, key: str) -> str:
+    # TimeoutExpired can contain bytes even when the process used text=True.
+    text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output or ""
+    return text.replace(key, "<redacted>") if key else text
+
+
 def parse_output(output: str) -> Diagnosis:
     text = _ANSI.sub("", output)
     text = "\n".join(re.sub(r"^\s*│ ?", "", line).removesuffix("│").rstrip() for line in text.splitlines())
@@ -103,7 +110,7 @@ def parse_output(output: str) -> Diagnosis:
     try:
         tree = ast.parse(textwrap.dedent(fix))
         definitions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        if definitions:
+        if definitions and not function:
             function = definitions[0].name
         elif tree.body and not function:
             function = "<module>"
@@ -121,6 +128,25 @@ def context_items(repo: str, selected: list) -> list:
         for window in selected)]
 
 
+def _read_capture(path: Path) -> dict:
+    """Reject malformed child-process data before parsing or grounding it."""
+    if not path.exists():
+        return {}
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(captured, dict) or not isinstance(captured.get("raw_response"), str):
+        raise ValueError("capture must contain a text raw_response")
+    windows = captured.get("selected_chunks", [])
+    if not isinstance(windows, list):
+        raise ValueError("selected_chunks must be a list")
+    for window in windows:
+        if not isinstance(window, dict) or not isinstance(window.get("path"), str) or not window["path"]:
+            raise ValueError("captured windows must contain a path")
+        start, end = window.get("start"), window.get("end")
+        if type(start) is not int or type(end) is not int or start < 1 or end < start:
+            raise ValueError("captured windows must contain valid line bounds")
+    return captured
+
+
 def _upstream_revision(root: Path) -> str:
     try:
         return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -136,6 +162,7 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
     root = Path(baseline_root).resolve()
     record = {"case": case.id, "dataset": case.dataset, "system": "stakeholder_original", "model": model,
               "max_tokens": max_tokens, "top_k": 3, "status": "not_run", "metrics": None,
+              "bug_report_sha256": hashlib.sha256(case.bug_report.encode("utf-8")).hexdigest(),
               "upstream_revision": _upstream_revision(root)}
     if skip_live:
         return {**record, "reason": "Live calls explicitly skipped; no model result is claimed."}
@@ -163,19 +190,23 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
         try:
             result = execute(command, cwd=root, env=env, capture_output=True, text=True, timeout=timeout,
                              stdin=subprocess.DEVNULL)
-            captured = json.loads(capture_file.read_text()) if capture_file.exists() else {}
-            raw = captured.get("raw_response", result.stdout).replace(key, "<redacted>")
+            captured = _read_capture(capture_file)
+            raw = _redact_output(captured.get("raw_response", result.stdout), key)
             diagnosis = parse_output(raw)
             items = context_items(str(repo), captured.get("selected_chunks", []))
             status = "ok" if result.returncode == 0 and diagnosis.valid else "error"
             return {**record, "status": status, "reason": "" if status == "ok" else "process_or_parse_failure",
                     "returncode": result.returncode, "wall_s": time.perf_counter() - started,
-                    "raw_response": raw, "stdout": result.stdout.replace(key, "<redacted>"),
-                    "stderr": result.stderr.replace(key, "<redacted>"), "diagnosis": asdict(diagnosis),
+                    "raw_response": raw, "stdout": _redact_output(result.stdout, key),
+                    "stderr": _redact_output(result.stderr, key), "diagnosis": asdict(diagnosis),
                     "selected_chunks": captured.get("selected_chunks", []), "context_items": items,
                     "usage": captured.get("usage"), "prompt_sha256": captured.get("prompt_sha256"),
                     "metrics": score_diagnosis(case, diagnosis, items) if status == "ok" else None}
-        except (subprocess.TimeoutExpired, OSError, ValueError) as error:
+        except subprocess.TimeoutExpired as error:
+            return {**record, "status": "error", "reason": type(error).__name__,
+                    "wall_s": time.perf_counter() - started, "metrics": None,
+                    "stdout": _redact_output(error.stdout, key), "stderr": _redact_output(error.stderr, key)}
+        except (OSError, ValueError) as error:
             return {**record, "status": "error", "reason": type(error).__name__,
                     "wall_s": time.perf_counter() - started, "metrics": None}
 
@@ -185,6 +216,7 @@ def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, rep
         raise ValueError("limit must be positive")
     if sleep < 0:
         raise ValueError("sleep must be nonnegative")
+    manifest_hash = hashlib.sha256(Path(manifest).read_bytes()).hexdigest()
     cases = load_cases(manifest, root=repo_root)
     if len({c.id for c in cases}) != len(cases):
         raise ValueError("case IDs must be unique")
@@ -199,13 +231,16 @@ def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, rep
             try:
                 row = run_case(case, baseline_root, **kwargs)
             except (OSError, ValueError) as error:
-                row = {"case": case.id, "status": "error", "metrics": None, "reason": type(error).__name__}
+                row = {"case": case.id, "dataset": case.dataset, "system": "stakeholder_original",
+                       "bug_report_sha256": hashlib.sha256(case.bug_report.encode("utf-8")).hexdigest(),
+                       "status": "error", "metrics": None, "reason": type(error).__name__}
             rows.append(row)
             output.write(json.dumps(row) + "\n")
             output.flush()
             print(f"{case.id}: {row['status']}", flush=True)
     measured = [r for r in rows if r["status"] != "not_run"]
     summary = {"revision": revision(), "manifest": manifest, "repo_root": repo_root,
+               "manifest_sha256": manifest_hash,
                "planned": len(rows), "measured": len(measured),
                "parsed_successful": sum(r["status"] == "ok" for r in rows),
                "not_run": sum(r["status"] == "not_run" for r in rows),

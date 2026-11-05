@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -49,6 +50,15 @@ def test_parser_preserves_python_exponentiation_and_bold_headings():
     text = SAMPLE.replace("return price * 0.8", "return price ** 2").replace("Relevant file:", "**Relevant file:**")
     result = baseline.parse_output(text)
     assert result.valid and "return price ** 2" in result.fix
+
+
+@pytest.mark.parametrize("function", ["checkout", "Checkout.checkout"])
+def test_parser_preserves_explicit_function_when_fix_includes_helper(function):
+    text = SAMPLE.replace("Relevant file:", f"Function: `{function}`\n\nRelevant file:")
+    text = text.replace("def checkout(price):", "def normalize(price):\n    return price\n\ndef checkout(price):")
+    result = baseline.parse_output(text)
+    assert result.valid and result.function == function
+    assert "def normalize" in result.fix and "def checkout" in result.fix
 
 
 def test_actual_command_contains_only_buggy_repo_and_report(tmp_path, monkeypatch):
@@ -103,6 +113,75 @@ def test_error_output_redacts_key_and_never_scores_as_success(tmp_path, monkeypa
     assert timed["reason"] == "TimeoutExpired"
 
 
+@pytest.mark.parametrize("stdout,stderr", [
+    ("partial test-secret", "failure test-secret"),
+    (b"partial test-secret\xff", b"failure test-secret"),
+    (None, None),
+])
+def test_timeout_preserves_redacted_partial_diagnostics(tmp_path, monkeypatch, stdout, stderr):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+
+    def execute(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, 1, output=stdout, stderr=stderr)
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["reason"] == "TimeoutExpired"
+    assert result["metrics"] is None and "test-secret" not in json.dumps(result)
+    if stdout is None:
+        assert result["stdout"] == result["stderr"] == ""
+    else:
+        assert "partial <redacted>" in result["stdout"]
+        assert result["stderr"] == "failure <redacted>"
+
+
+@pytest.mark.parametrize("payload", [
+    None,
+    {"raw_response": 17},
+    {"raw_response": SAMPLE, "selected_chunks": [{"path": "payment.py"}]},
+    {"raw_response": SAMPLE, "selected_chunks": [{"path": "payment.py", "start": 2, "end": 1}]},
+])
+def test_malformed_capture_is_an_execution_failure(tmp_path, monkeypatch, payload):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-real")
+
+    def execute(command, **kwargs):
+        Path(kwargs["env"]["ADAPTIVE_BASELINE_CAPTURE"]).write_text(json.dumps(payload))
+        return SimpleNamespace(stdout=SAMPLE, stderr="", returncode=0)
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["metrics"] is None
+
+
+def test_bad_capture_does_not_abort_the_remaining_cases(tmp_path, monkeypatch):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-real")
+    manifest = tmp_path / "cases.jsonl"
+    manifest.write_text("".join(json.dumps({"id": name, "repo": case.repo, "bug_report": case.bug_report}) + "\n"
+                                for name in ("bad-capture", "good-capture")))
+    calls = []
+
+    def execute(command, **kwargs):
+        calls.append(command)
+        payload = None if len(calls) == 1 else {"raw_response": SAMPLE, "selected_chunks": []}
+        Path(kwargs["env"]["ADAPTIVE_BASELINE_CAPTURE"]).write_text(json.dumps(payload))
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    result = baseline.run(str(manifest), str(upstream), str(tmp_path / "output"), execute=execute)
+    rows = [json.loads(line) for line in (tmp_path / "output/results.jsonl").read_text().splitlines()]
+    assert [row["status"] for row in rows] == ["error", "ok"]
+    assert result["measured"] == 2 and result["errors"] == result["parsed_successful"] == 1
+
+
 def test_skip_summary_keeps_unmeasured_metrics_null(tmp_path):
     case = fixture_case(tmp_path)
     manifest = tmp_path / "cases.jsonl"
@@ -110,6 +189,22 @@ def test_skip_summary_keeps_unmeasured_metrics_null(tmp_path):
     result = baseline.run(str(manifest), str(tmp_path), str(tmp_path / "output"), skip_live=True)
     assert result["planned"] == result["not_run"] == 1
     assert result["measured"] == 0 and result["metrics"] is None
+
+
+def test_input_fingerprints_track_manifest_and_report_changes(tmp_path):
+    case = fixture_case(tmp_path)
+    manifest = tmp_path / "cases.jsonl"
+    hashes = []
+    for index, report in enumerate((case.bug_report, case.bug_report + " Discounts should apply.")):
+        manifest.write_text(json.dumps({"id": case.id, "repo": case.repo, "bug_report": report}) + "\n")
+        output = tmp_path / f"output-{index}"
+        summary = baseline.run(str(manifest), str(tmp_path), str(output), skip_live=True)
+        row = json.loads((output / "results.jsonl").read_text())
+        assert summary["manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+        assert row["bug_report_sha256"] == hashlib.sha256(report.encode("utf-8")).hexdigest()
+        assert row["status"] == "not_run" and summary["metrics"] is None
+        hashes.append((summary["manifest_sha256"], row["bug_report_sha256"]))
+    assert hashes[0][0] != hashes[1][0] and hashes[0][1] != hashes[1][1]
 
 
 def test_context_requires_complete_function_window(tmp_path):
