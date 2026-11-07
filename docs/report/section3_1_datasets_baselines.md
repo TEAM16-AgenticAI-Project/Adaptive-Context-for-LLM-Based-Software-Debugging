@@ -27,8 +27,8 @@ The two primary comparison baselines use the team's shared chunking/retriever
 and model conditions: `static_k3` retrieves once at Top-3 and diagnoses once;
 `static_wide` retrieves once at Top-10 and diagnoses once. The wider baseline
 tests whether simply supplying more context explains any advantage of adaptation.
-The synthetic runner currently calls this baseline `static_wide`; the proposed
-real-case factory calls it `static_k10`. Karthik must record the actual names,
+The synthetic runner currently calls this baseline `static_wide`; the implemented
+systems factory calls it `static_k10`. Karthik must record the actual names,
 prompts, budgets and model settings for the final matched experiment.
 
 The stakeholder's [original implementation](https://github.com/YB-Yottabyte/adaptive-context/tree/c545608474b62e5635d240c49a790703e687848e)

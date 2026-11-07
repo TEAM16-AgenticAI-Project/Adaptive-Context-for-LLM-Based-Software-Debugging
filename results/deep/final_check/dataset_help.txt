@@ -1,0 +1,15 @@
+usage: dataset_summary.py [-h] --manifest MANIFEST [--out OUT]
+                          [--write-filtered] [--env ENV] [--pin PIN]
+
+Record reproduction metadata from builder manifests, without running a model.
+The builder's fail-before/pass-after records are retained, including
+unsuccessful attempts. This summarizes those records; it does not claim to
+rerun their tests.
+
+options:
+  -h, --help           show this help message and exit
+  --manifest MANIFEST
+  --out OUT
+  --write-filtered
+  --env ENV            NAME=PYTHON (record package versions)
+  --pin PIN            NAME=GIT_CHECKOUT (record source revision)

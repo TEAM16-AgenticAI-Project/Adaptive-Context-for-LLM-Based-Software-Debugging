@@ -117,11 +117,54 @@ def test_summary_and_markdown(case):
     assert s["by_form"] == {"function": {"cases": 1, "gold_passed": 1}, "diff": {"cases": 1, "gold_passed": 1}}
     md = audit.markdown(recs, s)
     assert "| pay-1 | function |" in md and "2/2" in md
+    assert audit.markdown_fixcheck(recs, s) == md
+    assert audit.summarize_audit([])["processed"] == 0
     json.dumps(s)
 
 
-def test_cli_audit_is_deeps_part(capsys):
-    assert audit.main(["--audit"]) == 2
+def test_cli_dispatches_to_deeps_implemented_audit(monkeypatch, tmp_path):
+    calls = []
+
+    def run_audit(manifest, out, **kwargs):
+        calls.append((manifest, out, kwargs))
+        return {"errors": 0, "processed": 1}
+
+    monkeypatch.setattr(audit, "run_audit", run_audit)
+    assert audit.main(["--audit", "--manifest", "cases.jsonl", "--out", str(tmp_path), "--limit", "1"]) == 0
+    assert calls[0][0] == "cases.jsonl" and calls[0][2]["limit"] == 1
+    assert audit.main(["--audit"]) == 0
+    assert calls[1][0] == audit.DEFAULT_MANIFEST
+
+
+def test_cli_dispatches_to_fixcheck_and_resolves_env_paths(monkeypatch, tmp_path):
+    calls = []
+
+    def validate(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"revision": {}, "all_ok": 1, "cases": 1}
+
+    monkeypatch.setattr(audit, "validate_fixcheck", validate)
+    assert audit.main(["--validate-fixcheck", "--bugsinpy", str(tmp_path), "--cases", "one",
+                       "--env", "current=relative/python", "--repo-root", str(tmp_path)]) == 0
+    assert os.path.isabs(calls[0][0][2]["current"])
+    assert calls[0][0][5] == {"one"} and calls[0][1]["repo_root"] == str(tmp_path)
+
+
+def test_cli_preserves_virtualenv_interpreter_symlink(monkeypatch, tmp_path):
+    base = tmp_path / "base-python"
+    base.write_text("# interpreter target fixture")
+    virtualenv = tmp_path / "venv-python"
+    virtualenv.symlink_to(base)
+    calls = []
+
+    def validate(*args, **kwargs):
+        calls.append(args)
+        return {"revision": {}, "all_ok": 0, "cases": 0}
+
+    monkeypatch.setattr(audit, "validate_fixcheck", validate)
+    assert audit.main(["--validate-fixcheck", "--bugsinpy", str(tmp_path),
+                       "--env", f"current={virtualenv}"]) == 0
+    assert calls[0][2]["current"] == str(virtualenv)
 
 
 def test_cli_needs_bugsinpy():

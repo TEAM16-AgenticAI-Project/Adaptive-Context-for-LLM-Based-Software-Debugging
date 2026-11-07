@@ -31,6 +31,15 @@ def test_audit_ranks_names_imports_and_does_not_mutate(tmp_path):
     assert (tmp_path / "pkg/a.py").read_bytes() == before
 
 
+def test_duplicate_hits_keep_the_first_gold_rank(tmp_path):
+    case = fixture_case(tmp_path)
+    chunks = audit.chunk_repo(audit.load_repo_dir(case.repo))
+    gold = next(chunk for chunk in chunks if chunk.id == "pkg/a.py::match")
+    other = next(chunk for chunk in chunks if chunk.id != gold.id)
+    result = audit.rank_metrics([(gold, 9), (other, 8), (other, 7), (gold, 6)], [gold.id])
+    assert result["best_rank"] == 1 and result["hit_at_3"]
+
+
 def test_labels_never_enter_retrieval_query(tmp_path, monkeypatch):
     case = fixture_case(tmp_path)
     case.gold_functions = ["LABEL_SENTINEL"]

@@ -1,0 +1,131 @@
+{
+  "checked_on": "2026-11-04",
+  "source_revision": "d75bc7c378a996f14972b711c34f2fbeb74d718d",
+  "main_integrated": "4d7c241",
+  "source_dirty": false,
+  "python": "3.12.14",
+  "source_imports": "PYTHONPATH set to this checkout's src directory",
+  "checks": {
+    "ruff": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/ruff",
+        "check",
+        "src",
+        "tests"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.05,
+      "output": "results/deep/nov4_followups/ruff.txt"
+    },
+    "audit": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.audit",
+        "--audit",
+        "--manifest",
+        "data/real/thefuck.jsonl",
+        "--repo-root",
+        "data/reproduced",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/nov4_followups/audit"
+      ],
+      "returncode": 0,
+      "wall_seconds": 2.94,
+      "output": "results/deep/nov4_followups/audit.txt"
+    },
+    "stakeholder_skip": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.stakeholder_baseline",
+        "--manifest",
+        "data/real/thefuck.jsonl",
+        "--repo-root",
+        "data/reproduced",
+        "--baseline-root",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/stakeholder",
+        "--skip-live",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/nov4_followups/stakeholder"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.54,
+      "output": "results/deep/nov4_followups/stakeholder_skip.txt"
+    },
+    "controlled": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.controlled",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/nov4_followups/controlled"
+      ],
+      "returncode": 0,
+      "wall_seconds": 6.55,
+      "output": "results/deep/nov4_followups/controlled.txt"
+    },
+    "pytest": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "returncode": 0,
+      "wall_seconds": 20.68,
+      "output": "results/deep/nov4_followups/pytest.txt"
+    },
+    "fixcheck": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.audit",
+        "--validate-fixcheck",
+        "--manifest",
+        "data/real/thefuck.jsonl",
+        "--repo-root",
+        "data/reproduced",
+        "--bugsinpy",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/BugsInPy",
+        "--env",
+        "py38-pytest6=/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/venv38/bin/python",
+        "--env",
+        "py38-pytest3=/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/venv38old/bin/python",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/nov4_followups/fixcheck"
+      ],
+      "returncode": 0,
+      "wall_seconds": 28.1,
+      "output": "results/deep/nov4_followups/fixcheck.txt"
+    },
+    "installed_cli": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.stakeholder_baseline",
+        "--manifest",
+        "data/real/thefuck.jsonl",
+        "--repo-root",
+        "data/reproduced",
+        "--baseline-root",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/stakeholder",
+        "--skip-live",
+        "--limit",
+        "1",
+        "--out",
+        "results/local/deep/nov4_installed"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.09,
+      "output": "results/deep/nov4_followups/installed_cli.txt",
+      "source_imports": "regular package installation; PYTHONPATH removed"
+    }
+  },
+  "live_groq": "not_run; these checks explicitly use --skip-live",
+  "native_chroma": "Existing repeated-ID limitation remains; no production chunking/retrieval change in this branch.",
+  "installed_source_match": {
+    "files_checked": 33,
+    "mismatches": []
+  }
+}

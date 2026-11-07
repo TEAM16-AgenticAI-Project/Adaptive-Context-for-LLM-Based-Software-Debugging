@@ -1,7 +1,7 @@
 """LLM-free evidence audit. Gold labels are used for scoring only, never retrieval.
 
-Tanay owns the future --validate-fixcheck action. This module exposes run_audit
-separately so that action can share main() without changing the audit schema.
+Deep's --audit and Tanay's --validate-fixcheck share one CLI.
+Both actions retain their existing Python helpers and result formats.
 """
 from __future__ import annotations
 
@@ -10,22 +10,21 @@ import ast
 import hashlib
 import json
 import os
+import shutil
+import tempfile
+import textwrap
 from pathlib import Path
 import platform
 import re
 import shlex
-import shutil
 import statistics
 import subprocess
-import sys
-import tempfile
-import textwrap
 import time
 
 from ..cases import load_cases, norm_path
 from ..chunking import chunk_repo, load_repo_dir, parse_source
-from ..fixcheck import FixError, apply_fix_to_source, check_fix, find_function
 from ..retrieval import BM25Retriever
+from ..fixcheck import FixError, apply_fix_to_source, check_fix, find_function
 from ..tools import run_failing_test
 from .bugsinpy import git_apply
 
@@ -65,7 +64,9 @@ def _module(path: str) -> str:
 
 
 def rank_metrics(hits: list, gold_ids: list) -> dict:
-    ranks = {chunk.id: rank for rank, (chunk, _) in enumerate(hits, 1)}
+    ranks = {}
+    for rank, (chunk, _) in enumerate(hits, 1):
+        ranks.setdefault(chunk.id, rank)
     gold_ranks = {gold: ranks.get(gold) for gold in gold_ids}
     known = [r for r in gold_ranks.values() if r is not None]
     return {"gold_ranks": gold_ranks, "best_rank": min(known) if known else None,
@@ -144,7 +145,10 @@ def audit_case(case, *, chroma=False, chroma_factory=None, deduplicate=False) ->
     return row
 
 
-def summarize_audit(rows: list) -> dict:
+def summarize(rows: list, revision: dict | None = None) -> dict:
+    """Keep both published helper signatures: audit(rows), fixcheck(rows, revision)."""
+    if revision is not None:
+        return summarize_fixcheck(rows, revision)
     ok = [r for r in rows if r["status"] == "ok"]
     summary = {"attempted": len(rows), "processed": len(ok), "errors": len(rows) - len(ok), "retrievers": {}}
     for name in sorted({n for r in ok for n in r["retrievers"]}):
@@ -159,6 +163,11 @@ def summarize_audit(rows: list) -> dict:
     summary["name_ambiguity"] = {"labels": len(counts), "median": statistics.median(counts) if counts else None,
                                  "max": max(counts) if counts else None}
     return summary
+
+
+def summarize_audit(rows: list) -> dict:
+    """Named evidence-summary entry point published by the main-branch merger."""
+    return summarize(rows)
 
 
 def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=False, repo_root=None) -> dict:
@@ -188,14 +197,16 @@ def run_audit(manifest: str, out: str, *, chroma=False, limit=None, deduplicate=
                    "all_at_k": "all evaluator gold functions in first k chunks",
                    "imports": "direct syntactic imports only; conditional imports counted, transitive imports not inferred",
                    "traceback": "gold relative path explicitly mentioned in manifest failing-test output, not a fresh test run"},
-               **summarize_audit(rows)}
+               **summarize(rows)}
     (directory / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return summary
 
 
-ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MANIFEST = str(ROOT / "data" / "real" / "thefuck.jsonl")
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+DEFAULT_MANIFEST = os.path.join(ROOT, "data", "real", "thefuck.jsonl")
 _TEST_FILE = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$")
+
 
 def split_patch(patch: str) -> dict:
     """{path: section text} for every non-test file in a unified git diff."""
@@ -358,7 +369,7 @@ def summarize_fixcheck(records: list, revision: dict) -> dict:
             "not_ok": [r["id"] for r in records if not r["ok"]]}
 
 
-def markdown_fixcheck(records: list, summary: dict) -> str:
+def markdown(records: list, summary: dict) -> str:
     rev = summary["revision"]
     lines = ["# Fix-check validation on dataset B (BugsInPy/thefuck, real tests, no LLM)", "",
              f"Commit `{rev['commit'][:10]}`{' (src dirty)' if rev['src_dirty'] else ''}. "
@@ -375,9 +386,14 @@ def markdown_fixcheck(records: list, summary: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def markdown_fixcheck(records: list, summary: dict) -> str:
+    """Preserve the named main-branch formatter as well as markdown()."""
+    return markdown(records, summary)
+
+
 def validate_fixcheck(manifest: str, bugsinpy: str, envs: dict, out_dir: str, timeout: int = 120,
-                      only: set | None = None, project: str = "thefuck") -> dict:
-    cases = [c for c in load_cases(manifest) if not only or c.id in only]
+                      only: set | None = None, project: str = "thefuck", repo_root=None) -> dict:
+    cases = [c for c in load_cases(manifest, root=repo_root) if not only or c.id in only]
     records = []
     for case in cases:
         bug = case.source.get("bugsinpy", "").split("/")[-1]
@@ -399,59 +415,50 @@ def validate_fixcheck(manifest: str, bugsinpy: str, envs: dict, out_dir: str, ti
     return summary
 
 
-def summarize(*args):
-    if len(args) == 1:
-        return summarize_audit(args[0])
-    if len(args) == 2:
-        return summarize_fixcheck(args[0], args[1])
-    raise TypeError("summarize() expects 1 arg (audit rows) or 2 args (fixcheck records, revision)")
 
-
-def markdown(records: list, summary: dict) -> str:
-    return markdown_fixcheck(records, summary)
-
-
+# Both owners share this dispatcher; each action preserves its own result schema.
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--audit", action="store_true", help="evidence audit on real bugs")
-    mode.add_argument("--validate-fixcheck", action="store_true",
-                      help="validate fixcheck against maintainer patches")
+    mode.add_argument("--audit", action="store_true", help="evidence audit (Deep)")
+    mode.add_argument("--validate-fixcheck", action="store_true", help="maintainer-fix validation (Tanay)")
     parser.add_argument("--manifest", default=DEFAULT_MANIFEST)
-    parser.add_argument("--out", default=str(ROOT / "results"))
-
-    # --audit options
-    parser.add_argument("--chroma", action="store_true", help="also measure the optional ChromaRetriever")
-    parser.add_argument("--limit", type=int)
-    parser.add_argument("--repo-root", help="resolve repo paths here while retaining the manifest bug reports")
+    parser.add_argument("--repo-root", help="override the base directory of manifest checkout paths")
+    parser.add_argument("--out", help="defaults to results/deep/audit for evidence, or results for fixcheck")
+    parser.add_argument("--chroma", action="store_true", help="also measure Chroma (--audit only)")
+    parser.add_argument("--limit", type=int, help="maximum evidence-audit cases")
     parser.add_argument("--deduplicate-chunks", dest="deduplicate", action="store_true",
-                        help="explicit comparison variant: keep last definition per ID for BOTH rankers")
-
-    # --validate-fixcheck options
-    parser.add_argument("--bugsinpy", help="BugsInPy checkout (for maintainer patches)")
+                        help="last-definition input variant for both rankers (--audit only)")
+    parser.add_argument("--bugsinpy", help="BugsInPy checkout for maintainer patches")
     parser.add_argument("--project", default="thefuck")
-    parser.add_argument("--env", action="append", default=[], help="NAME=PYTHON (repeatable)")
-    parser.add_argument("--cases", default="", help="comma-separated case ids (default: all)")
+    parser.add_argument("--env", action="append", default=[], help="NAME=PYTHON (repeatable; fixcheck)")
+    parser.add_argument("--cases", default="", help="comma-separated fixcheck case IDs")
     parser.add_argument("--timeout", type=int, default=120)
-
     args = parser.parse_args(argv)
-
+    if args.timeout < 1 or (args.limit is not None and args.limit < 1):
+        parser.error("timeout and limit must be positive")
     if args.audit:
-        if (args.manifest == DEFAULT_MANIFEST and args.out == str(ROOT / "results")
-                and args.limit is None and args.repo_root is None
-                and not args.chroma and not args.deduplicate):
-            print("--audit is implemented in Deep's PR (bench/audit.py:run_audit)", file=sys.stderr)
-            return 2
-        result = run_audit(args.manifest, args.out, chroma=args.chroma, limit=args.limit,
-                           deduplicate=args.deduplicate, repo_root=args.repo_root)
-        print(json.dumps(result, indent=2))
-        return 1 if result["errors"] else 0
-
+        if args.cases:
+            parser.error("--cases is for --validate-fixcheck; --audit supports --limit")
+        summary = run_audit(args.manifest, args.out or "results/deep/audit", chroma=args.chroma,
+                            limit=args.limit, deduplicate=args.deduplicate, repo_root=args.repo_root)
+        print(json.dumps(summary, indent=2))
+        return 1 if summary["errors"] else 0
     if not args.bugsinpy:
         parser.error("--validate-fixcheck needs --bugsinpy")
-    envs = dict(entry.split("=", 1) for entry in args.env)
-    only = {case.strip() for case in args.cases.split(",") if case.strip()} or None
-    summary = validate_fixcheck(args.manifest, args.bugsinpy, envs, args.out, args.timeout, only, args.project)
+    if args.chroma or args.deduplicate or args.limit is not None:
+        parser.error("--chroma, --deduplicate-chunks and --limit require --audit")
+    envs = {}
+    for item in args.env:
+        name, separator, python = item.partition("=")
+        if not separator or not name or not python:
+            parser.error("--env must be NAME=PYTHON")
+        # Keep a virtualenv's interpreter symlink: resolving it selects the base
+        # Python and loses that environment's installed test dependencies.
+        envs[name] = os.path.abspath(os.path.expanduser(python))
+    only = {value.strip() for value in args.cases.split(",") if value.strip()} or None
+    summary = validate_fixcheck(args.manifest, args.bugsinpy, envs, args.out or os.path.join(ROOT, "results"),
+                                args.timeout, only, args.project, repo_root=args.repo_root)
     print(json.dumps({key: value for key, value in summary.items() if key != "revision"}, indent=2))
     return 0 if summary["all_ok"] == summary["cases"] else 1
 

@@ -1,0 +1,6 @@
+{
+  "source_revision": "1213d8757f508f3676700b0423fca5622db25cc1",
+  "check": "git archive HEAD + fresh Python 3.12 dev/agent environment",
+  "pytest_returncode": 0,
+  "required_runtime_credentials": false
+}
