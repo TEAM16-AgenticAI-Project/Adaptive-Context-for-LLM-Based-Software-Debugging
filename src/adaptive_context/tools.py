@@ -10,6 +10,7 @@ That is not a security sandbox: only run tests from repositories you trust.
 from __future__ import annotations
 
 import contextlib
+import difflib
 import logging
 import os
 import re
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 
 _CLASS = re.compile(r"^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:", re.M)
 _DEF_QUERY = re.compile(r"^\s*(?:async\s+def|def|class)?\s*([A-Za-z_][\w.]*)\s*(?:\(\s*\))?\s*:?\s*$")
+_CODE_NAME = re.compile(r"_|[a-z][A-Z]|^[A-Z][a-z]")   # looks like a function or class name, not a word
 OVERVIEW = 500.0          # priority of method outlines added for a large class (below callers/callees, above search)
 PIN_DEF = 900.0           # priority of a definition that search_code found by its exact name
 _AUX = re.compile(r"(^|/)(tests?|testing|demos?|examples?|docs?|maint|scripts|benchmarks?)/|(^|/)test_[^/]*$|_test\.py$")
@@ -381,7 +383,22 @@ class Tools:
             files = sorted({p for p, _ in self.classes()[short]})
             hint = (f" '{short}' is a class defined in {', '.join(files[:3])}; read_function "
                     f"'{files[0]}::{short}' lists its methods.")
+        else:
+            hint = self.missing_hint(short)
         return f"no function '{qual or value}'{where}.{hint}"
+
+    def missing_hint(self, name: str) -> str:
+        """For a name defined nowhere: say so, with the closest existing names. A failing test that calls a
+        function which does not exist yet means the fix has to add it."""
+        names = {c.name.split(".")[-1] for c in self.retriever.chunks if c.kind in ("function", "method")
+                 and not _AUX.search(c.path)}                    # code to change, not tests or docs
+        names |= set(self.classes())
+        if name in names:
+            return ""
+        close = difflib.get_close_matches(name, sorted(names), n=3, cutoff=0.6)
+        return (f" Nothing named '{name}' is defined in the repository" +
+                (f" (closest: {', '.join(close)})" if close else "") +
+                ". If the failing test uses it, the fix must add it: write the new function in fix or other_changes.")
 
     def definitions_for(self, query: str, exclude=frozenset()) -> list:
         """For a query that is just a name ('format_meter', 'def format_meter', 'class Bar'), its definitions:
@@ -413,9 +430,14 @@ class Tools:
             hits = [(c, PIN_DEF) for c in defs]
             if len(hits) < self.k:
                 hits += self.retriever.search(value, self.k - len(hits), exclude | {c.id for c in defs})
-            return ToolResult(True, f"{len(hits)} new matches: " + ", ".join(c.id for c, _ in hits) +
+            m = _DEF_QUERY.match(value)
+            missing = ""
+            bare = m.group(1).split(".")[-1] if m else ""
+            if bare and not defs and _CODE_NAME.search(bare) and not self.resolve(m.group(1)):
+                missing = self.missing_hint(bare)               # a code-like name (a_b, aB, Ab) defined nowhere
+            return ToolResult(True, (f"{len(hits)} new matches: " + ", ".join(c.id for c, _ in hits) +
                               (f" (definition{'s' if len(defs) > 1 else ''} first)" if defs else "") if hits
-                              else "no new matches", list(hits))
+                              else "no new matches") + ("." + missing if missing else ""), list(hits))
         found = self.resolve(value)
         inside = [] if found else self.members(value)
         if inside:                                          # a file or a class was passed instead of a function

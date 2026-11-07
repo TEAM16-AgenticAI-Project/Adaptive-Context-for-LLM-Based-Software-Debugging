@@ -543,6 +543,17 @@ class LangGraphAgent:
         if res.get("passed"):
             return {**out, "stop": "verified"}
         if attempts <= self.max_verify:
+            pool, pinned = dict(s["pool"]), set(s["pinned"])
+            added = []
+            for loc in res.get("suggest") or []:          # where the same defect probably is: show it in full
+                for c in self.tools.resolve(loc)[:1]:
+                    if c.id not in pinned:
+                        pinned.add(c.id)
+                        pool[c.id] = [c, PIN + stats.tool_calls + 1]
+                        added.append(c.id)
+            if added:
+                log.info("  likely the same defect in: %s (pinned)", ", ".join(added))
+            out.update(pool=pool, pinned=frozenset(pinned))
             where = ", ".join(dict.fromkeys([d.file] + [loc["file"] for loc in d.locations]))
             note = (f"Your fix (in {where}) did not pass the checks: {res.get('reason', 'failed')}. The results "
                     "are under FAILING TEST OUTPUT. Gather evidence if needed (read_function, get_related, "

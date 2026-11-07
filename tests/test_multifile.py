@@ -324,3 +324,99 @@ def test_a_forced_round_is_relaxed_once_when_the_model_insists_on_a_tool(shells)
     res = _agent(shells, script, max_verify=1, max_rounds=8).run("zsh alias is wrong")
     assert script.seen[3]["tools"] == ["diagnose"] and "get_related" in script.seen[4]["tools"]
     assert "You may call one more tool now" in script.seen[4]["prompt"] and res.stop_reason == "verified"
+
+
+# ---------------------------------------------------------------- run-2 findings
+def test_bare_diff_hunks_are_applied_inside_the_function(shells):
+    hunk = "@@\n-        return 'alias ' + name + '=fk'\n+        return 'alias ' + name + \"='fk'\"\n"
+    res = apply_edits(shells, [Edit("pkg/bash.py", "Bash.app_alias", hunk),
+                               Edit("pkg/zsh.py", "Zsh.app_alias", hunk.replace("@@\n", ""))])   # no @@ line
+    assert res.problems == []
+    assert "        return 'alias ' + name + \"='fk'\"" in _src(shells, "pkg/bash.py")
+    assert "\"='fk'\"" in _src(shells, "pkg/zsh.py")
+    add_only = apply_edits(shells, [Edit("pkg/util.py", "old_name", "@@\n+    x = 1\n")])
+    assert add_only.problems and "only adds lines" in add_only.problems[0]
+    missing = apply_edits(shells, [Edit("pkg/util.py", "old_name", "@@\n-    return nothing\n+    return 1\n")])
+    assert missing.problems and "were not found" in missing.problems[0]
+
+
+def test_oracle_names_the_sibling_function_to_change(shells):
+    oracle = TestOracle(shells, python=sys.executable, test_cmd="pytest -q tests/test_zsh.py::test_app_alias")
+    one = oracle.check([Edit("pkg/zsh.py", "Zsh.app_alias", FIXED)])
+    assert one["suggest"] == ["pkg/bash.py::Bash.app_alias"]
+    assert "Likely the same defect in: pkg/bash.py::Bash.app_alias" in one["output"]
+    assert "Keep your change to pkg/zsh.py::Zsh.app_alias" in one["output"]
+
+
+def test_suggested_sibling_is_pinned_for_the_next_diagnosis(shells):
+    script = Script([_diag(), _diag(("pkg/bash.py", "Bash.app_alias"))])
+    res = _agent(shells, script, max_verify=2).run("`tests/test_zsh.py::test_app_alias` fails")
+    assert res.stop_reason == "verified"
+    assert "class Bash" in script.seen[1]["prompt"] or "Bash.app_alias" in script.seen[1]["prompt"]
+    assert any(cid == "pkg/bash.py::Bash.app_alias" for cid, _ in res.context_items)
+
+
+def test_a_test_file_that_did_not_import_before_is_not_a_regression(shells):
+    p = os.path.join(shells, "tests", "test_new.py")
+    with open(p, "w") as fh:     # imports a name the fix adds, and one of its tests fails for an unrelated reason
+        fh.write("from pkg.zsh import Zsh\nfrom pkg.util import new_name\n\n\n"
+                 "def test_app_alias():\n    assert Zsh().app_alias('x') == 'other'\n")
+    oracle = TestOracle(shells, python=sys.executable, test_cmd="pytest -q tests/test_zsh.py::test_app_alias")
+    assert "tests/test_new.py" in oracle.baseline(["tests/test_new.py"])          # the collection ERROR is seen
+    fix = [Edit("pkg/zsh.py", "Zsh.app_alias", FIXED), Edit("pkg/bash.py", "Bash.app_alias", FIXED),
+           Edit("pkg/util.py", "new_name", "def new_name(s):\n    return s\n")]
+    assert oracle.check(fix)["regressions"] == []
+
+
+def test_search_for_a_name_defined_nowhere_says_so(shells):
+    from adaptive_context.chunking import load_repo_dir
+    t = Tools(BM25Retriever(chunk_repo(load_repo_dir(shells))))
+    res = t.execute("search_code", {"query": "fix_app_aliases"})
+    assert "Nothing named 'fix_app_aliases' is defined" in res.summary and "the fix must add it" in res.summary
+    assert "Nothing named" not in t.execute("search_code", {"query": "alias"}).summary     # a word, not a name
+    assert "Nothing named" not in t.execute("search_code", {"query": "app_alias"}).summary
+    miss = t.execute("read_function", {"name": "app_aliass"})
+    assert "closest: app_alias" in miss.summary
+
+
+def test_scoring_ignores_flaky_failures_and_unimportable_files(tmp_path):
+    from adaptive_context.bench.multifile_eval import flaky, new_failures
+    assert new_failures({"a.py::t", "b.py::t2", "c.py::t3"}, ["b.py", "c.py::t3"]) == ["a.py::t"]
+    (tmp_path / "test_f.py").write_text(
+        "import os\n\n\ndef test_once():\n    if not os.path.exists('seen'):\n        open('seen', 'w').close()\n"
+        "        assert False\n\n\ndef test_always():\n    assert False\n")
+    from adaptive_context.multifix import failing_tests
+    from adaptive_context.tools import run_pytest_in
+    first = failing_tests(run_pytest_in(str(tmp_path), None, 60, 100000, sys.executable,
+                                        "pytest -q -rfE -p no:cacheprovider test_f.py")["output"])
+    assert first == {"test_f.py::test_once", "test_f.py::test_always"}
+    assert flaky(str(tmp_path), sorted(first), sys.executable, 60) == ["test_f.py::test_once"]
+
+
+def test_a_replaced_block_after_a_blank_line_keeps_its_indentation(tmp_path):
+    (tmp_path / "m.py").write_text("def f(x):\n    if x:\n        return 1\n\n    while x > 1:\n        x -= 1\n"
+                                   "    return x\n")
+    res = apply_edits(str(tmp_path), [Edit("m.py", "f", "@@\n-    while x > 1:\n+    y = x\n+    while x > 1:\n")])
+    assert res.problems == []
+    assert "        return 1\n\n    y = x\n    while x > 1:\n" in (tmp_path / "m.py").read_text()
+
+
+def test_no_suggestion_for_a_place_the_fix_already_changes(shells):
+    oracle = TestOracle(shells, python=sys.executable, test_cmd="pytest -q tests/test_zsh.py::test_app_alias")
+    wrong = "def app_alias(self, name):\n    return 'nope'\n"
+    res = oracle.check([Edit("pkg/zsh.py", "Zsh.app_alias", FIXED), Edit("pkg/bash.py", "Bash.app_alias", wrong)])
+    assert res["related_failing"] == ["tests/test_bash.py::test_app_alias"] and res["suggest"] == []
+
+
+def test_suggestions_work_for_module_level_functions(tmp_path):
+    files = {"pkg/__init__.py": "", "pkg/a.py": "def name():\n    return 1\n", "pkg/b.py": "def name():\n    return 1\n",
+             "tests/__init__.py": "",
+             "tests/test_a.py": "from pkg.a import name\n\n\ndef test_name():\n    assert name() == 2\n",
+             "tests/test_b.py": "from pkg.b import name\n\n\ndef test_name():\n    assert name() == 2\n"}
+    for rel, text in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    oracle = TestOracle(str(tmp_path), python=sys.executable, test_cmd="pytest -q tests/test_a.py::test_name")
+    fix = "def name():\n    return 2\n"
+    assert oracle.check([Edit("pkg/a.py", "name", fix)])["suggest"] == ["pkg/b.py::name"]
+    assert oracle.check([Edit("pkg/a.py", "name", fix), Edit("pkg/b.py", "name", fix)])["passed"]

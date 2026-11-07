@@ -29,6 +29,7 @@ import json
 import logging
 import multiprocessing
 import os
+import shlex
 import signal
 import time
 import traceback
@@ -37,7 +38,7 @@ import warnings
 from ..cases import load_cases
 from ..llm import make_llm
 from ..logs import setup_logging, short
-from ..multifix import TestOracle, apply_edits, edits_from_diagnosis, failing_tests
+from ..multifix import PYTEST_SUMMARY, TestOracle, apply_edits, edits_from_diagnosis, failing_tests
 from ..tools import kill_active_tests, run_pytest_in, temp_repo
 from .bugsinpy import git_apply
 
@@ -86,8 +87,29 @@ def make_manifest(out: str = MANIFEST) -> int:
 
 def _suite(work: str, multi: dict, python: str, timeout: int) -> set:
     ign = " ".join(f"--ignore {p}" for p in multi.get("suite_ignore", []) if os.path.exists(os.path.join(work, p)))
-    cmd = f"pytest -q -rf -p no:cacheprovider --continue-on-collection-errors {multi['suite']} {ign}"
+    cmd = f"pytest -q {PYTEST_SUMMARY} -p no:cacheprovider --continue-on-collection-errors {multi['suite']} {ign}"
     return failing_tests(run_pytest_in(work, None, timeout, 100000, python, cmd)["output"])
+
+
+def _gold_key(case) -> str:
+    return f"{case.id}{PYTEST_SUMMARY}"         # the reference depends on what the summary reports
+
+
+def new_failures(fails: set, gold) -> list:
+    """Failures the agent's patch adds over the maintainer's fix. A test in a file that could not even be
+    collected with the maintainer's fix (an ERROR for the whole file) is not a new failure."""
+    gold = set(gold)
+    broken = {g for g in gold if "::" not in g}
+    return sorted(t for t in fails - gold if not any(t.startswith(f + "::") for f in broken))
+
+
+def flaky(work: str, tests: list, python: str, timeout: int) -> list:
+    """Of the new failures, those that pass when run again on their own (timing, ports, subprocesses)."""
+    if not tests:
+        return []
+    cmd = f"pytest -q {PYTEST_SUMMARY} -p no:cacheprovider " + " ".join(shlex.quote(t) for t in tests)
+    still = failing_tests(run_pytest_in(work, None, timeout, 100000, python, cmd)["output"])
+    return [t for t in tests if t not in still and not any(t.startswith(f + "::") for f in still)]
 
 
 def _patch_path(bugsinpy: str, case) -> str:
@@ -96,15 +118,16 @@ def _patch_path(bugsinpy: str, case) -> str:
 
 
 def gold_failures(case, multi: dict, python: str, bugsinpy: str, cache: dict, timeout: int) -> list:
-    if case.id not in cache:
+    key = _gold_key(case)
+    if key not in cache:
         t0 = time.perf_counter()
         log.info("%s: running the offline suite with the maintainer's fix (reference, cached)...", case.id)
         with temp_repo(case.repo, "adaptive_eval_") as work:
             git_apply(work, _patch_path(bugsinpy, case))                  # raises if the gold patch fails
-            cache[case.id] = sorted(_suite(work, multi, python, timeout))
+            cache[key] = sorted(_suite(work, multi, python, timeout))
         log.info("%s: reference done in %.0fs (%d tests fail even with the maintainer's fix)", case.id,
-                 time.perf_counter() - t0, len(cache[case.id]))
-    return cache[case.id]
+                 time.perf_counter() - t0, len(cache[key]))
+    return cache[key]
 
 
 def score(case, multi: dict, diagnosis, python: str, gold: list, timeout: int) -> dict:
@@ -125,8 +148,15 @@ def score(case, multi: dict, diagnosis, python: str, gold: list, timeout: int) -
         t0 = time.perf_counter()
         fails = _suite(work, multi, python, timeout)
         log.info("%s: scored on the offline suite in %.0fs", case.id, time.perf_counter() - t0)
-        out["new_failures"] = sorted(fails - set(gold))[:20]
-        out["solved"] = out["target_passed"] and not out["new_failures"]
+        new = new_failures(fails, gold)
+        if new and out["target_passed"]:
+            out["flaky"] = flaky(work, new[:40], python, timeout)
+            if out["flaky"]:
+                log.info("%s: %d new failure(s) pass when rerun (flaky, not counted): %s", case.id,
+                         len(out["flaky"]), short(", ".join(out["flaky"]), 200))
+            new = [t for t in new if t not in out["flaky"]]
+        out["new_failures"] = new[:20]
+        out["solved"] = out["target_passed"] and not new
         return out
 
 
@@ -141,7 +171,7 @@ def check_gold(cases, raw, envs, bugsinpy, timeout) -> int:
             with temp_repo(c.repo, "adaptive_eval_") as work:
                 git_apply(work, _patch_path(bugsinpy, c), include=f, strict=False)
                 ok = run_pytest_in(work, None, timeout, 5, py, c.test_cmd)["passed"]
-                single.append(ok and _suite(work, multi, py, timeout) <= gold)
+                single.append(ok and not new_failures(_suite(work, multi, py, timeout), gold))
         print(f"{c.id}: source files {len(c.gold_files)}  needs several files: {not any(single)} "
               f"(manifest says {multi['needs_several_files']})")
     return 0

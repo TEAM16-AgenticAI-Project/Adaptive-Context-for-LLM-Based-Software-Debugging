@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
 _NOT_TESTS = re.compile(r"(^|/)(maint|demos?|examples?|docs?|scripts|benchmarks?|\.tox|build|dist)/")
 
 MODULE = "<module>"
-_FAIL_LINE = re.compile(r"^(FAILED|ERROR|FAIL) (\S+)")
+_FAIL_LINE = re.compile(r"^(FAILED|ERROR|FAIL)\s+(?:collecting\s+)?(\S+)")
+PYTEST_SUMMARY = "-rfE"                    # failures AND errors (an import error in a test file is an ERROR)
 _DEF = ("def ", "async def ", "@", "class ")
 
 
@@ -69,6 +70,8 @@ def _replace_lines(lines: list, lo: int, hi: int, old: str, new: str) -> list | 
     if not want:
         return None
     for i in range(lo, hi):
+        if not lines[i].strip():                       # a match starts on a code line (its indent is reused)
+            continue
         j, k = i, 0
         while j < hi and k < len(want):
             if not lines[j].strip():                   # blank lines inside the block are allowed
@@ -133,9 +136,52 @@ def _find_class(tree, qual: str):
     return node
 
 
+def _qualified_functions(tree) -> list:
+    """[(qualified name, node)] for functions and methods (nested classes included)."""
+    out = []
+
+    def walk(body, prefix):
+        for n in body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                out.append((prefix + n.name, n))
+            elif isinstance(n, ast.ClassDef):
+                walk(n.body, prefix + n.name + ".")
+    walk(tree.body, "")
+    return out
+
+
 def _top_names(tree) -> set:
     return {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))} | {
         t.id for n in tree.body if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name)}
+
+
+def _hunks(code: str) -> list | None:
+    """Bare unified-diff hunks (``@@`` / ``-old`` / ``+new`` lines without file headers), which models often write
+    as a "fix": [(old lines, new lines)] per hunk, or None if `code` is not hunk-shaped."""
+    lines = strip_fences(code).strip("\n").splitlines()
+    body = [ln for ln in lines if ln.strip()]
+    if not body or is_diff(code):
+        return None
+    marks = [ln for ln in body if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))]
+    if not (any(ln.startswith("@@") for ln in body) or (marks and body[0].startswith(("+", "-", "@@"))
+                                                        and all(ln.startswith(("+", "-", " ", "@@")) for ln in body))):
+        return None
+    out, old, new = [], [], []
+    for ln in lines:
+        if ln.startswith("@@"):
+            if old or new:
+                out.append(("\n".join(old), "\n".join(new)))
+            old, new = [], []
+        elif ln.startswith("-") and not ln.startswith("---"):
+            old.append(ln[1:])
+        elif ln.startswith("+") and not ln.startswith("+++"):
+            new.append(ln[1:])
+        else:                                            # context line (" x" or blank)
+            old.append(ln[1:] if ln.startswith(" ") else ln)
+            new.append(ln[1:] if ln.startswith(" ") else ln)
+    if old or new:
+        out.append(("\n".join(old), "\n".join(new)))
+    return [h for h in out if h[0].strip() or h[1].strip()] or None
 
 
 def _apply_one(src: str, e: Edit) -> tuple:
@@ -160,6 +206,22 @@ def _apply_one(src: str, e: Edit) -> tuple:
             return src.rstrip("\n") + "\n\n\n" + code, ""
         last_import = max((n.end_lineno for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))), default=0)
         return "".join(lines[:last_import]) + code + "".join(lines[last_import:]), ""
+    hunks = None if e.old.strip() else _hunks(e.code)
+    if hunks:                                             # bare `@@ -old +new` hunks: line replacements in the function
+        try:
+            _, node = find_function(tree, name)
+            lo, hi = min([node.lineno] + [d.lineno for d in node.decorator_list]) - 1, node.end_lineno
+        except FixError:
+            lo, hi = 0, len(lines)
+        for i, (old, new) in enumerate(hunks, 1):
+            if not old.strip():
+                return src, f"hunk {i} for {e.file}::{e.function} only adds lines; include the lines it follows"
+            out = _replace_lines(lines, lo, min(len(lines), hi + 40), old, new)
+            if out is None:
+                return src, f"hunk {i}: its '-' and context lines were not found in {e.file}::{e.function}"
+            hi += len(out) - len(lines)
+            lines = out
+        return "".join(lines), ""
     if e.old.strip():                                     # replace a few exact lines inside the function (or file)
         try:
             _, node = find_function(tree, name)
@@ -324,7 +386,7 @@ class TestOracle:
     def _run_files(self, work: str, files: list, label: str) -> set:
         if not files:
             return set()
-        cmd = f"pytest -q -rf -p no:cacheprovider --continue-on-collection-errors {' '.join(files)}"
+        cmd = f"pytest -q {PYTEST_SUMMARY} -p no:cacheprovider --continue-on-collection-errors {' '.join(files)}"
         res = run_pytest_in(work, None, self.timeout, 400, self.python, cmd)
         fails = failing_tests(res["output"])
         log.info("    related tests %s: %d file(s), %d failing, %.0fs%s", label, len(files), len(fails),
@@ -365,26 +427,57 @@ class TestOracle:
             files = self.related_test_files(changed, sorted(keys))
             log.info("    related test files: %s", short(", ".join(files) or "none", 240))
             before, after = self.baseline(files), self._run_files(work, files, "after the fix")
-            regressions = sorted(after - before)
             target_name = re.split(r"[.:]", (self.test_cmd or self.test_path or "").split()[-1])[-1]
             target_name = target_name.split("[")[0]
             keys |= {target_name} if target_name else set()
             tfile = _target_file(self.test_cmd, self.test_path)
             is_target = (lambda t: bool(tfile) and t.startswith(tfile) and bool(target_name)  # noqa: E731
                          and target_name in t)
+            broken_files = {t for t in before if "::" not in t}        # files that did not even import before
+            regressions = sorted(t for t in after - before if not is_target(t)
+                                 and not any(t.startswith(f + "::") for f in broken_files))
             still = sorted(t for t in after & before if any(k and k in t for k in keys) and not is_target(t))
+            suggest = self.suggest_locations(work, still, keys - {target_name}) if still else []
+            suggest = [loc for loc in suggest if not any(                 # not a place this fix already changes
+                loc.split("::")[0].endswith(e.file.lstrip("./"))
+                and loc.split("::")[-1].split(".")[-1] == e.function.split(".")[-1]
+                for e in edits)]
             passed = target["passed"] and not regressions and not dangling and not still
             reason = ("passed" if passed else ("timeout" if target["timed_out"] else "tests_fail")
                       if not target["passed"] else
                       "regressions" if regressions else "dangling_names" if dangling else "related_failing")
             output = self.feedback(edits, changed, dict(target, output=scrub_paths(target["output"], work)),
-                                   regressions, still, dangling)
+                                   regressions, still, dangling, suggest)
             return {"applied": True, "mode": "multi", "passed": passed, "reason": reason, "files_changed": changed,
                     "target_passed": target["passed"], "regressions": regressions, "related_failing": still,
-                    "dangling": dangling, "related_files": files, "output": output}
+                    "dangling": dangling, "related_files": files, "suggest": suggest, "output": output}
+
+    def suggest_locations(self, work: str, failing: list, names: set) -> list:
+        """Where the same defect probably sits: a related test still fails (e.g. tests/shells/test_bash.py), so look
+        in the source module with the same name (bash.py) for a function with a name the fix changed
+        (app_alias). Returns ['path.py::Qual.name', ...]."""
+        stems = {re.sub(r"^tests?_|_test$", "", os.path.splitext(os.path.basename(t.split("::")[0]))[0])
+                 for t in failing}
+        out = []
+        for d, dirs, files in os.walk(work):
+            dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x != "__pycache__")
+            for f in sorted(files):
+                rel = os.path.relpath(os.path.join(d, f), work).replace("\\", "/")
+                if not f.endswith(".py") or os.path.splitext(f)[0] not in stems or _NOT_TESTS.search(rel) \
+                        or re.search(r"(^|/)tests?/", rel):
+                    continue
+                try:
+                    with open(os.path.join(d, f), encoding="utf-8", errors="replace") as fh:
+                        tree = ast.parse(fh.read())
+                except SyntaxError:
+                    continue
+                for qual, _node in _qualified_functions(tree):
+                    if qual.split(".")[-1] in names:
+                        out.append(f"{rel}::{qual}")
+        return out[:4]
 
     @staticmethod
-    def feedback(edits, changed, target, regressions, still, dangling) -> str:
+    def feedback(edits, changed, target, regressions, still, dangling, suggest=()) -> str:
         lines = [f"Your fix changed {len(edits)} place(s) in {len(changed)} file(s): {', '.join(changed)}."]
         if not target["passed"]:
             lines.append(f"The failing test still fails:\n{failure_excerpt(target['output'])}")
@@ -399,4 +492,10 @@ class TestOracle:
         if still:
             lines.append("Related tests about the same functions still fail, so the same defect may exist in other "
                          "places (e.g. sibling implementations): " + ", ".join(still[:6]))
+        if suggest:
+            keep = (f" Keep your change to {edits[0].file}::{edits[0].function} as it is (the failing test passes). "
+                    if target["passed"] else " ")
+            lines.append(f"Likely the same defect in: {', '.join(suggest)} (added to CONTEXT).{keep}"
+                         "Diagnose again with that change in fix and the same correction for each of these places "
+                         "in other_changes.")
         return "\n".join(lines)
