@@ -4,8 +4,10 @@ The original implementation on `deep/datasets-baselines` was merged in
 [PR #7](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/7).
 Integration fixes and verification were merged on November 3 through
 [PR #10](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/10).
-The current follow-up branch is `deep/m2-evidence-followups`, based on main
-`4d7c241`, including Karthik's real-case runner from PR #11.
+The adapter follow-ups were merged through
+[PR #13](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/13).
+The current branch is `deep/m2-final-adapter-checks`, based on main `044ebd8`,
+including Karthik's real-case runner (PR #11) and evaluation script (PR #12).
 This contribution covers Deep's assigned area in `docs/m2_tasks/deep.md`.
 
 The [integration recheck](../../results/deep/recheck/README.md) records offline
@@ -14,7 +16,9 @@ shared CLI actions and the virtualenv interpreter regression.
 The [November 1 command checks](../../results/deep/final_check/README.md) run both
 actions and the controlled-case validator on their recorded source revision.
 The [November 4 follow-up checks](../../results/deep/nov4_followups/README.md)
-record validation of the current adapter fixes against the newer merged main.
+record validation of those adapter fixes against their recorded source revision.
+The [November 8 checks](../../results/deep/nov8_submission/README.md) cover the
+latest class-method parser and failure-diagnostic corrections.
 
 ## Completed
 
@@ -32,6 +36,9 @@ record validation of the current adapter fixes against the newer merged main.
   output, while keeping their status as errors and their metrics null.
   [Timeout regression evidence](../../results/deep/nov4_timeout/README.md)
   records the committed implementation and subsequent checks.
+  Single methods inside class-wrapped patches are now inferred with their class
+  qualifier; ambiguous class replacements remain module-level. Capture/launch
+  errors retain redacted error details, process logs and available return codes.
 - Eight controlled multi-file fixtures, manifests and gold patches outside the
   indexed repos. Validation demonstrates actual test failure before and passing
   after each gold patch without changing the original buggy files.
@@ -46,11 +53,9 @@ record validation of the current adapter fixes against the newer merged main.
   [Experiment analysis](deep_experiments.md) is separate supporting material for
   Karthik, not another full group report.
 
-The main-snapshot linter already failed on one unused import in Karthik's
-`bench/contributions.py`. This branch removes that import only, with no behavior
-change, so the required repository-wide check passes. All other implementation
-changes are Deep's new tooling, datasets, tests and report files; existing shared
-interfaces are preserved.
+The current branch changes Deep's stakeholder adapter, regression tests and
+evidence/report handoff. Earlier implementation and integration work is linked
+through the merged PRs above.
 
 ## Evidence and limits
 
@@ -63,8 +68,8 @@ comparison, final integrated demonstration, stakeholder meeting and group report
 assembly still belong to the team owners.
 
 The native Chroma failure must be reviewed with Yadnesh before presenting the
-last-definition variant as production behavior. Main `4d7c241` is now integrated,
-including Karthik's baseline fixes, systems factory and real-case runner:
+last-definition variant as production behavior. Main `044ebd8` is now integrated,
+including Karthik's baseline fixes, systems factory, real-case runner and eval script:
 `bench/audit.py` supports both `--audit` and Tanay's `--validate-fixcheck`, preserving
 both helper/result interfaces. The verifier also accepts `--repo-root`, and the
 shared CLI makes interpreter paths absolute without dereferencing virtualenv

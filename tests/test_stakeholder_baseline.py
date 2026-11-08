@@ -61,6 +61,21 @@ def test_parser_preserves_explicit_function_when_fix_includes_helper(function):
     assert "def normalize" in result.fix and "def checkout" in result.fix
 
 
+@pytest.mark.parametrize("prefix", ["", "async "])
+def test_parser_infers_a_single_class_qualified_method(prefix):
+    text = SAMPLE.replace("def checkout(price):\n    return price * 0.8",
+                          f"class Checkout:\n    {prefix}def apply(self, price):\n        return price * 0.8")
+    result = baseline.parse_output(text)
+    assert result.valid and result.function == "Checkout.apply"
+
+
+def test_parser_does_not_guess_between_multiple_class_methods():
+    text = SAMPLE.replace("def checkout(price):\n    return price * 0.8",
+                          "class Checkout:\n    def first(self):\n        pass\n    def second(self):\n        pass")
+    result = baseline.parse_output(text)
+    assert result.valid and result.function == "<module>"
+
+
 def test_actual_command_contains_only_buggy_repo_and_report(tmp_path, monkeypatch):
     case = fixture_case(tmp_path)
     upstream = tmp_path / "upstream"
@@ -180,6 +195,40 @@ def test_bad_capture_does_not_abort_the_remaining_cases(tmp_path, monkeypatch):
     rows = [json.loads(line) for line in (tmp_path / "output/results.jsonl").read_text().splitlines()]
     assert [row["status"] for row in rows] == ["error", "ok"]
     assert result["measured"] == 2 and result["errors"] == result["parsed_successful"] == 1
+
+
+def test_invalid_capture_retains_redacted_process_diagnostics(tmp_path, monkeypatch):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+
+    def execute(command, **kwargs):
+        Path(kwargs["env"]["ADAPTIVE_BASELINE_CAPTURE"]).write_text("null")
+        return SimpleNamespace(stdout="provider started test-secret", stderr="diagnostic test-secret", returncode=0)
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["reason"] == "ValueError" and result["metrics"] is None
+    assert result["returncode"] == 0 and "raw_response" in result["error_detail"]
+    assert result["stdout"] == "provider started <redacted>"
+    assert result["stderr"] == "diagnostic <redacted>" and "test-secret" not in json.dumps(result)
+
+
+def test_launch_failure_retains_redacted_error_detail(tmp_path, monkeypatch):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+
+    def execute(command, **kwargs):
+        raise OSError("unable to launch test-secret")
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["reason"] == "OSError" and result["metrics"] is None
+    assert result["error_detail"] == "unable to launch <redacted>"
+    assert result["returncode"] is None and result["stdout"] == result["stderr"] == ""
 
 
 def test_skip_summary_keeps_unmeasured_metrics_null(tmp_path):
