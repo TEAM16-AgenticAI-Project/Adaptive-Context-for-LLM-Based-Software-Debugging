@@ -197,6 +197,40 @@ def test_bad_capture_does_not_abort_the_remaining_cases(tmp_path, monkeypatch):
     assert result["measured"] == 2 and result["errors"] == result["parsed_successful"] == 1
 
 
+def test_invalid_capture_retains_redacted_process_diagnostics(tmp_path, monkeypatch):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+
+    def execute(command, **kwargs):
+        Path(kwargs["env"]["ADAPTIVE_BASELINE_CAPTURE"]).write_text("null")
+        return SimpleNamespace(stdout="provider started test-secret", stderr="diagnostic test-secret", returncode=0)
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["reason"] == "ValueError" and result["metrics"] is None
+    assert result["returncode"] == 0 and "raw_response" in result["error_detail"]
+    assert result["stdout"] == "provider started <redacted>"
+    assert result["stderr"] == "diagnostic <redacted>" and "test-secret" not in json.dumps(result)
+
+
+def test_launch_failure_retains_redacted_error_detail(tmp_path, monkeypatch):
+    case = fixture_case(tmp_path)
+    upstream = tmp_path / "upstream"
+    (upstream / "src").mkdir(parents=True)
+    (upstream / "src/baseline.py").write_text("# fixture")
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+
+    def execute(command, **kwargs):
+        raise OSError("unable to launch test-secret")
+
+    result = baseline.run_case(case, str(upstream), execute=execute)
+    assert result["status"] == "error" and result["reason"] == "OSError" and result["metrics"] is None
+    assert result["error_detail"] == "unable to launch <redacted>"
+    assert result["returncode"] is None and result["stdout"] == result["stderr"] == ""
+
+
 def test_skip_summary_keeps_unmeasured_metrics_null(tmp_path):
     case = fixture_case(tmp_path)
     manifest = tmp_path / "cases.jsonl"

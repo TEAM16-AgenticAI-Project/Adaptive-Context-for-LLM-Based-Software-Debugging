@@ -193,6 +193,7 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
             env.pop(secret, None)
         command = ["uv", "run", "python", "src/baseline.py", str(repo), "--provider", "groq", "--model", model,
                    "--top-k", "3", "--max-tokens", str(max_tokens)]
+        result = None
         try:
             result = execute(command, cwd=root, env=env, capture_output=True, text=True, timeout=timeout,
                              stdin=subprocess.DEVNULL)
@@ -214,7 +215,11 @@ def run_case(case, baseline_root: str, *, model=DEFAULT_MODEL, max_tokens=DEFAUL
                     "stdout": _redact_output(error.stdout, key), "stderr": _redact_output(error.stderr, key)}
         except (OSError, ValueError) as error:
             return {**record, "status": "error", "reason": type(error).__name__,
-                    "wall_s": time.perf_counter() - started, "metrics": None}
+                    "wall_s": time.perf_counter() - started, "metrics": None,
+                    "error_detail": _redact_output(str(error), key),
+                    "returncode": getattr(result, "returncode", None),
+                    "stdout": _redact_output(getattr(result, "stdout", None), key),
+                    "stderr": _redact_output(getattr(result, "stderr", None), key)}
 
 
 def run(manifest: str, baseline_root: str, out: str, *, limit=None, sleep=0, repo_root=None, **kwargs) -> dict:
