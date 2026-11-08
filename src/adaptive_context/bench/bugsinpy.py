@@ -142,18 +142,13 @@ def export_commit(clone: str, commit: str, dest: str) -> None:
         os.remove(tar_path)
 
 
-def git_apply(dest: str, patch_path: str, reverse: bool = False, include: str | None = None,
-              strict: bool = True) -> bool:
-    """Apply a patch file to a plain directory (optionally only the hunks for `include`). Returns True on success;
-    with strict=True a failure raises. GIT_CEILING_DIRECTORIES stops git from treating an enclosing repository
-    (e.g. this project, when cases live under data/) as the patch root, which would silently skip every file."""
-    cmd = ["git", "apply", *(["-R"] if reverse else []), *(["--include", include] if include else []),
-           os.path.abspath(patch_path)]
+def git_apply(dest: str, patch_path: str, reverse: bool) -> None:
+    """Apply a patch to a plain directory. GIT_CEILING_DIRECTORIES stops git from treating an enclosing
+    repository (e.g. this project, when cases live under data/) as the patch root, which would silently
+    skip every file."""
+    cmd = ["git", "apply", *(["-R"] if reverse else []), os.path.abspath(patch_path)]
     env = {**os.environ, "GIT_CEILING_DIRECTORIES": os.path.dirname(os.path.abspath(dest))}
-    p = subprocess.run(cmd, cwd=dest, capture_output=True, env=env, timeout=120)
-    if strict and p.returncode:
-        raise subprocess.CalledProcessError(p.returncode, cmd, p.stdout, p.stderr)
-    return p.returncode == 0
+    subprocess.run(cmd, cwd=dest, check=True, capture_output=True, env=env)
 
 
 def build_case(bug_dir: str, clone: str, project: str, bug_id: int, out_dir: str, env_name: str, python: str,

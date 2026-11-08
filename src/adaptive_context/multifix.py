@@ -17,6 +17,7 @@ it is not a security sandbox.
 from __future__ import annotations
 
 import ast
+import difflib
 import logging
 import os
 import re
@@ -290,6 +291,28 @@ def apply_edits(root: str, edits: list) -> PatchResult:
         with open(full, "w", encoding="utf-8") as fh:
             fh.write(src)
     return res
+
+
+def preview(repo: str, diagnosis) -> dict:
+    """The patch a diagnosis describes, as one unified diff per file (applied to a temporary copy; `repo` is not
+    changed): {"files": [{"file", "places": ["Qual.name", ...], "diff"}], "problems": [...]}. For showing a
+    multi-file fix to a person (the CLI JSON and the web UI)."""
+    edits = edits_from_diagnosis(diagnosis)
+    if not edits:
+        return {"files": [], "problems": []}
+    with temp_repo(repo, "adaptive_preview_") as work:
+        patch = apply_edits(work, edits)
+        out = []
+        for path, new in sorted(patch.files.items()):
+            with open(os.path.join(repo, path), encoding="utf-8", errors="replace") as fh:
+                old = fh.read()
+            if old == new:
+                continue
+            diff = "".join(difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
+                                                f"a/{path}", f"b/{path}", n=2))
+            places = [e.function for e in edits if _repo_file(work, e.file) == path]
+            out.append({"file": path, "places": list(dict.fromkeys(places)), "diff": diff})
+    return {"files": out, "problems": patch.problems}
 
 
 def dangling_names(root: str, removed: dict) -> list:

@@ -276,3 +276,57 @@ def test_simulator_drives_the_graph_offline():
         res = lg.LangGraphAgent(_retriever(case.files), lg.SimToolLLM(SimulatedLLM())).run(case.bug_report)
         solved += res.diagnosis.function == case.truth.function
     assert solved >= 18
+
+
+# ---------------------------------------------------------------- stakeholder cases (examples/, from his repo)
+AUTH = os.path.join(os.path.dirname(__file__), "..", "examples", "auth_bug")
+FIXED_CAN_ACCESS = '''def can_access(user, action):
+    """Return whether an active user may perform an action."""
+    role = str(user.get("role", "guest")).strip().lower()
+    return bool(user.get("active", False)) and action in permissions_for(role)'''
+
+
+def _auth_agent(script, **kw):
+    pytest.importorskip("langgraph")
+    from adaptive_context import agent_graph as lg
+    retr = BM25Retriever(chunk_repo(load_repo_dir(AUTH)))
+    return lg.LangGraphAgent(retr, script, tools=Tools(retr, AUTH, test_path="test_auth.py"), **kw)
+
+
+def _ids(summary):
+    return set(summary.split(": ", 1)[1].split(" (")[0].split(", ")) if "new matches:" in summary else set()
+
+
+def test_overlapping_searches_add_only_new_code_and_repeats_are_skipped():
+    """Stakeholder request: several searches that hit the same code must not fill the context with duplicates,
+    and the agent should still find new, useful code (here the permissions table the bug depends on)."""
+    q1 = {"query": "deactivated admin export access"}
+    q2 = {"query": "admin role export permission when account is not active"}        # overlaps q1's hits
+    diag = {"file": "auth.py", "function": "can_access", "cause": "admins skip the active check",
+            "fix": FIXED_CAN_ACCESS, "confidence": "high"}
+    script = ToolScript([ToolCall("search_code", q1), ToolCall("search_code", q2), ToolCall("search_code", q1),
+                         ToolCall("diagnose", diag)])
+    res = _auth_agent(script, initial_k=1).run(open(os.path.join(AUTH, "bug_report.txt")).read())
+    first, second, third = (t["results"][0]["summary"] for t in res.trace[:3])
+    assert _ids(first) and _ids(second) and not _ids(first) & _ids(second)      # the second search brings new code
+    assert "permissions.py::permissions_for" in _ids(first) | _ids(second)
+    assert third.startswith("already called in round 1")                         # an identical search is not rerun
+    ids = [cid for cid, _ in res.context_items]
+    assert len(ids) == len(set(ids)) and "permissions.py::permissions_for" in ids  # no duplicate chunks in context
+    assert res.diagnosis.function == "can_access"
+
+
+def test_agent_verify_solves_the_stakeholder_auth_bug():
+    from adaptive_context.multifix import TestOracle
+    oracle = TestOracle(AUTH, python=None, test_cmd="pytest -q test_auth.py")
+    wrong = FIXED_CAN_ACCESS.replace('bool(user.get("active", False)) and ', "")
+    script = ToolScript([ToolCall("read_function", {"name": "can_access"}),
+                         ToolCall("diagnose", {"file": "auth.py", "function": "can_access", "cause": "admin bypass",
+                                               "fix": wrong, "confidence": "high"}),
+                         ToolCall("diagnose", {"file": "auth.py", "function": "can_access",
+                                               "cause": "admins skip the active check", "fix": FIXED_CAN_ACCESS,
+                                               "confidence": "high"})])
+    res = _auth_agent(script, verifier=oracle.check, max_verify=2).run(
+        open(os.path.join(AUTH, "bug_report.txt")).read())
+    assert res.stop_reason == "verified" and res.verification["passed"]
+    assert "test_deactivated_admin_cannot_export" in script.seen[2]["prompt"]       # the failure was fed back

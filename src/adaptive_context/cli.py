@@ -4,6 +4,7 @@
   bench   synthetic benchmark on generated cases            (python -m adaptive_context.bench.run --help)
   cases   compare systems on a real/controlled case manifest (python -m adaptive_context.bench.run_cases --help)
   audit   LLM-free evidence audit + fix-check validation     (python -m adaptive_context.bench.audit --help)
+  ui      web UI (pip install -e ".[ui]")                    (python -m adaptive_context.webui.server --help)
 """
 from __future__ import annotations
 
@@ -20,11 +21,55 @@ from .retrieval import BM25Retriever, ChromaRetriever
 from .tools import Tools, run_failing_test, with_failure_output
 
 
+MODES = ("baseline", "adaptive", "agent", "agent_verify")
+
+
 def _positive(value: str) -> int:
     n = int(value)
     if n < 1:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return n
+
+
+def build_debugger(repo: str, report: str, *, mode: str = "adaptive", llm: str = "groq", python: str | None = None,
+                   test_cmd: str | None = None, run_test: str | None = None, model: str | None = None,
+                   reasoning_effort: str | None = None, max_tokens: int = 2048, retriever: str = "bm25", top_k: int = 3,
+                   rounds: int = 6, budget: int = 3000, prefetch: int = 2, max_verify: int = 3,
+                   time_limit: int | None = None):
+    """Build the debugger for one repository; shared by `adaptive-context debug` and the web UI.
+
+    mode is baseline | adaptive | agent | agent_verify. The test (run_test: a path, or test_cmd: a command) is the
+    failing regression test: baseline/adaptive get its output added to the report, the agent can rerun it, and
+    agent_verify checks every proposed fix (all of its places, in any file) with it and the related tests.
+    Returns (system, report, info). Raises ValueError for bad input, LLMError without an API key and RuntimeError
+    for the agent modes without langgraph."""
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {', '.join(MODES)}")
+    if run_test and mode in ("baseline", "adaptive"):
+        tr = run_failing_test(repo, run_test, python=python)
+        print(f"run_failing_test: passed={tr['passed']} timed_out={tr['timed_out']}", file=sys.stderr)
+        report = with_failure_output(report, tr)
+    files = load_repo_dir(repo)
+    if not files:
+        raise ValueError(f"no .py files under {repo}")
+    chunks = chunk_repo(files)
+    retr = ChromaRetriever(chunks) if retriever == "chroma" else BM25Retriever(chunks)
+    agentic = mode in ("agent", "agent_verify")
+    llm_obj = make_llm(llm, model=model, reasoning_effort=reasoning_effort, max_tokens=max_tokens, tools=agentic)
+    cfg = {"top_k": top_k, "rounds": rounds, "budget": budget, "prefetch_depth": prefetch,
+           "max_verify": max_verify, "time_limit": time_limit}
+    name = {"baseline": "static_k3", "adaptive": "adaptive_graph" if prefetch else "adaptive"}.get(mode, mode)
+    tools = verifier = None
+    if agentic:
+        tools = Tools(retr, repo, test_path=run_test, python=python, test_cmd=test_cmd)
+    if mode == "agent_verify":
+        if not (run_test or test_cmd):
+            raise ValueError("agent_verify needs the failing test (--run-test, or a case / test command)")
+        # multi-location check (fix + other_changes, any file) with related tests; see multifix.py
+        from .multifix import TestOracle
+        verifier = TestOracle(repo, python=python, test_cmd=test_cmd, test_path=run_test).check
+    system = make_system(name, retr, llm_obj, cfg, tools=tools, verifier=verifier)
+    return system, report, {"files": len(files), "chunks": len(chunks), "system": name}
 
 
 def _debug(a) -> int:
@@ -45,39 +90,13 @@ def _debug(a) -> int:
     if not report:
         print("give --bug-report TEXT or --bug-report-file FILE", file=sys.stderr)
         return 2
-    if a.run_test and a.mode in ("baseline", "adaptive"):
-        tr = run_failing_test(a.repo, a.run_test, python=a.python)
-        print(f"run_failing_test: passed={tr['passed']} timed_out={tr['timed_out']}", file=sys.stderr)
-        report = with_failure_output(report, tr)
-    files = load_repo_dir(a.repo)
-    if not files:
-        print(f"no .py files under {a.repo}", file=sys.stderr)
-        return 2
-    chunks = chunk_repo(files)
-    retr = ChromaRetriever(chunks) if a.retriever == "chroma" else BM25Retriever(chunks)
-    agentic = a.mode in ("agent", "agent_verify")
     try:
-        llm = make_llm(a.llm, model=a.model, reasoning_effort=a.reasoning_effort, max_tokens=a.max_tokens,
-                       tools=agentic)
-    except LLMError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    cfg = {"top_k": a.top_k, "rounds": a.rounds, "budget": a.budget, "prefetch_depth": a.prefetch,
-           "max_verify": a.max_verify, "time_limit": a.time_limit or None}
-    name = {"baseline": "static_k3", "adaptive": "adaptive_graph" if a.prefetch else "adaptive"}.get(a.mode, a.mode)
-    tools = verifier = None
-    if agentic:
-        tools = Tools(retr, a.repo, test_path=a.run_test, python=a.python, test_cmd=test_cmd)
-    if a.mode == "agent_verify":
-        if not (a.run_test or test_cmd):
-            print("--mode agent_verify needs --run-test or --case (the regression test to rerun)", file=sys.stderr)
-            return 2
-        # multi-location check (fix + other_changes, any file) with related tests; see multifix.py
-        from .multifix import TestOracle
-        verifier = TestOracle(a.repo, python=a.python, test_cmd=test_cmd, test_path=a.run_test).check
-    try:
-        system = make_system(name, retr, llm, cfg, tools=tools, verifier=verifier)
-    except RuntimeError as e:                              # agent modes without langgraph
+        system, report, _ = build_debugger(a.repo, report, mode=a.mode, llm=a.llm, python=a.python, test_cmd=test_cmd,
+                                           run_test=a.run_test, model=a.model, reasoning_effort=a.reasoning_effort,
+                                           max_tokens=a.max_tokens, retriever=a.retriever, top_k=a.top_k,
+                                           rounds=a.rounds, budget=a.budget, prefetch=a.prefetch,
+                                           max_verify=a.max_verify, time_limit=a.time_limit or None)
+    except (ValueError, LLMError, RuntimeError) as e:   # bad input, no API key, or agent modes without langgraph
         print(f"error: {e}", file=sys.stderr)
         return 2
     res = system.run(report)
@@ -99,7 +118,7 @@ def main(argv=None) -> int:
     d.add_argument("--env", action="append", default=[], help="NAME=PYTHON for --case test environments")
     d.add_argument("--bug-report", default="")
     d.add_argument("--bug-report-file")
-    d.add_argument("--mode", choices=["baseline", "adaptive", "agent", "agent_verify"], default="adaptive")
+    d.add_argument("--mode", choices=MODES, default="adaptive")
     d.add_argument("--llm", choices=["groq", "sim"], default="groq")
     d.add_argument("--model", default=None)
     d.add_argument("--max-tokens", type=_positive, default=2048, help="LLM output tokens (use 4096 for multi-file)")
@@ -121,15 +140,15 @@ def main(argv=None) -> int:
     d.add_argument("--prefetch", type=int, default=2, help="adaptive mode: callee prefetch depth (0 = off)")
     for name, text in (("bench", "benchmark on generated cases"), ("cases", "compare systems on a case manifest"),
                        ("audit", "LLM-free evidence audit and fix-check validation"),
-                       ("multifile", "run and score the agent on real multi-file bugs")):
+                       ("ui", "web UI: run a system on a bug and see every file the fix changes")):
         sub.add_parser(name, help=text, add_help=False)          # --help goes to the runner itself
     a, rest = ap.parse_known_args(argv)
     if a.cmd != "debug":
-        module = {"bench": "run", "cases": "run_cases", "audit": "audit", "multifile": "multifile_eval"}[a.cmd]
+        module = {"bench": "bench.run", "cases": "bench.run_cases", "audit": "bench.audit", "ui": "webui.server"}[a.cmd]
         try:                                        # run_cases (evaluation PR) and audit (datasets PR) land later
-            runner = importlib.import_module(f".bench.{module}", __package__).main
+            runner = importlib.import_module(f".{module}", __package__).main
         except ModuleNotFoundError:
-            print(f"`{a.cmd}` needs bench/{module}.py, which is not on this branch yet", file=sys.stderr)
+            print(f"`{a.cmd}` needs {module.replace('.', '/')}.py, which is not on this branch yet", file=sys.stderr)
             return 2
         runner(rest)
         return 0

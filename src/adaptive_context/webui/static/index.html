@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Adaptive-Context Debugger</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Adaptive-Context Debugger</h1>
+    <p class="sub">An LLM agent that gathers its own context, proposes a fix in every file that needs one, and checks it against the tests.</p>
+  </header>
+
+  <main>
+    <section class="panel" id="input-panel">
+      <h2>1. Pick a bug</h2>
+      <div class="source-tabs">
+        <button class="tab active" data-source="example">Test cases</button>
+        <button class="tab" data-source="upload">Upload .zip</button>
+        <button class="tab" data-source="git">Public git URL</button>
+        <button class="tab" data-source="local">Local path</button>
+      </div>
+      <div class="source-body">
+        <div class="source" data-source="example">
+          <select id="example"></select>
+          <p class="hint" id="example-note"></p>
+        </div>
+        <div class="source hidden" data-source="upload">
+          <input type="file" id="zip" accept=".zip" />
+          <p class="hint">A .zip of a Python repository (max 25&nbsp;MB). Its tests only run if the server allows it.</p>
+        </div>
+        <div class="source hidden" data-source="git">
+          <input type="text" id="git-url" placeholder="https://github.com/owner/repo.git" />
+          <p class="hint">Public HTTPS URL ending in <code>.git</code>, shallow-cloned on the server.</p>
+        </div>
+        <div class="source hidden" data-source="local">
+          <input type="text" id="local-path" placeholder="/path/to/repo" />
+          <p class="hint">A folder on the machine running the server.</p>
+        </div>
+      </div>
+
+      <h2>2. Describe the bug</h2>
+      <textarea id="bug-report" rows="6" placeholder="What goes wrong, and the failing test if there is one."></textarea>
+      <label class="inline">Failing test command
+        <input type="text" id="test-cmd" placeholder="pytest -q test_payment.py" />
+      </label>
+      <p class="hint">The agent can run it, and <b>agent + fix check</b> reruns it (and the related tests) on every proposed fix.</p>
+
+      <h2>3. Settings</h2>
+      <div class="settings">
+        <label>System
+          <select id="mode">
+            <option value="agent_verify">agent + fix check</option>
+            <option value="agent">agent (tools, no fix check)</option>
+            <option value="adaptive">adaptive retrieval loop</option>
+            <option value="baseline">baseline: static Top-K (stakeholder)</option>
+          </select>
+        </label>
+        <label>LLM
+          <select id="llm">
+            <option value="groq">groq: gpt-oss-20b</option>
+            <option value="sim">sim: offline simulator</option>
+          </select>
+        </label>
+        <label>Token budget <input type="number" id="budget" value="4000" min="500" max="32000" /></label>
+        <label>Max rounds <input type="number" id="rounds" value="8" min="1" max="20" /></label>
+        <label>Top-K <input type="number" id="topk" value="3" min="1" max="20" /></label>
+        <label>Fix checks <input type="number" id="max-verify" value="3" min="1" max="6" /></label>
+        <label>Time limit (s) <input type="number" id="time-limit" value="600" min="0" max="3600" /></label>
+      </div>
+
+      <button id="run" class="run">Debug it</button>
+      <p class="status" id="status"></p>
+    </section>
+
+    <section class="panel hidden" id="progress-panel">
+      <h2>Live log <span class="muted" id="elapsed"></span></h2>
+      <pre id="log" class="code log"></pre>
+    </section>
+
+    <section class="panel hidden" id="result-panel">
+      <h2>Result</h2>
+      <div id="verdict" class="verdict"></div>
+
+      <h3>Changes <span class="muted" id="changes-sub"></span></h3>
+      <div id="changes"></div>
+
+      <div class="cards">
+        <div class="card"><h3>Diagnosis</h3><div id="diagnosis"></div></div>
+        <div class="card"><h3>Fix check</h3><div id="check"></div></div>
+      </div>
+
+      <h3>Rounds <span class="muted">(what the agent asked for and got)</span></h3>
+      <div id="trace" class="trace"></div>
+
+      <h3>Evidence in the final prompt <span class="muted">(code the model actually read)</span></h3>
+      <ul id="evidence" class="evidence"></ul>
+
+      <details>
+        <summary>Raw JSON</summary>
+        <pre id="raw" class="code"></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer><span id="health"></span></footer>
+  <script src="app.js"></script>
+</body>
+</html>

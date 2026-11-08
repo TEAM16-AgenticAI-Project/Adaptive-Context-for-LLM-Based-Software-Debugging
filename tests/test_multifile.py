@@ -379,18 +379,14 @@ def test_search_for_a_name_defined_nowhere_says_so(shells):
     assert "closest: app_alias" in miss.summary
 
 
-def test_scoring_ignores_flaky_failures_and_unimportable_files(tmp_path):
-    from adaptive_context.bench.multifile_eval import flaky, new_failures
-    assert new_failures({"a.py::t", "b.py::t2", "c.py::t3"}, ["b.py", "c.py::t3"]) == ["a.py::t"]
-    (tmp_path / "test_f.py").write_text(
-        "import os\n\n\ndef test_once():\n    if not os.path.exists('seen'):\n        open('seen', 'w').close()\n"
-        "        assert False\n\n\ndef test_always():\n    assert False\n")
-    from adaptive_context.multifix import failing_tests
+def test_summary_lines_for_failures_and_errors_are_parsed(tmp_path):
+    (tmp_path / "test_f.py").write_text("def test_fails():\n    assert False\n")
+    (tmp_path / "test_broken.py").write_text("import not_a_module\n")
+    from adaptive_context.multifix import PYTEST_SUMMARY, failing_tests
     from adaptive_context.tools import run_pytest_in
-    first = failing_tests(run_pytest_in(str(tmp_path), None, 60, 100000, sys.executable,
-                                        "pytest -q -rfE -p no:cacheprovider test_f.py")["output"])
-    assert first == {"test_f.py::test_once", "test_f.py::test_always"}
-    assert flaky(str(tmp_path), sorted(first), sys.executable, 60) == ["test_f.py::test_once"]
+    out = run_pytest_in(str(tmp_path), None, 60, 100000, sys.executable,
+                        f"pytest -q {PYTEST_SUMMARY} -p no:cacheprovider --continue-on-collection-errors .")["output"]
+    assert failing_tests(out) == {"test_f.py::test_fails", "test_broken.py"}
 
 
 def test_a_replaced_block_after_a_blank_line_keeps_its_indentation(tmp_path):

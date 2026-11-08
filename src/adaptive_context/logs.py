@@ -2,7 +2,7 @@
 
 Modules log through `logging.getLogger(__name__)` (children of "adaptive_context"). The CLI and the evaluation
 scripts call `setup_logging` once; logs go to stderr (so JSON on stdout stays clean) and optionally to a file.
-    tail -f results/multifile/verify/run.log        # follow a running evaluation
+    adaptive-context debug ... --log-file results/agent_live/run.log   # then: tail -f that file
 """
 from __future__ import annotations
 
