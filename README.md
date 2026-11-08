@@ -45,6 +45,9 @@ python -m adaptive_context.bench.run --llm groq --n 30 --workers 1
 adaptive-context debug examples/auth_bug --bug-report-file examples/auth_bug/bug_report.txt \
     --mode agent_verify --run-test test_auth.py
 
+# baseline vs ours on the same bugs and model -> results/m2/compare/comparison.md (LLM=sim: offline dry run)
+scripts/run_comparison.sh
+
 # web UI: pick a stakeholder case or a benchmark bug, watch the live log, see one diff per changed file
 pip install -e ".[agent,ui]"
 adaptive-context ui --env py38-pytest3=<venv38old python> --env py38-pytest6=<venv38 python>   # http://127.0.0.1:8000

@@ -240,6 +240,7 @@ def create_app():
         except ImportError:
             agent = False
         return {"groq_key": bool(os.environ.get("GROQ_API_KEY")), "agent": agent,
+                "model": os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b"),
                 "untrusted_tests": SETTINGS["untrusted_tests"]}
 
     @app.get("/api/examples")
@@ -256,7 +257,7 @@ def create_app():
         if mode not in MODES or llm not in ("groq", "sim"):
             raise HTTPException(400, f"mode must be one of {', '.join(MODES)}; llm groq or sim")
         for name, lo, hi, val in (("budget", 500, 32000, budget), ("rounds", 1, 20, rounds), ("top_k", 1, 20, top_k),
-                                  ("max_verify", 1, 6, max_verify), ("time_limit", 0, 3600, time_limit)):
+                                  ("max_verify", 1, 10, max_verify), ("time_limit", 0, 3600, time_limit)):
             if not lo <= val <= hi:
                 raise HTTPException(400, f"{name} must be between {lo} and {hi}")
         job = Job(uuid.uuid4().hex[:12])

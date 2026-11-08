@@ -22,6 +22,7 @@ async function init() {
       h.groq_key ? "Groq key found" : "no GROQ_API_KEY on the server (use sim)",
       h.agent ? "agent available" : "agent modes need langgraph",
     ].join(" · ");
+    if (h.model) $("llm").querySelector('option[value="groq"]').textContent = "groq: " + h.model.replace(/^openai\//, "");
     if (!h.groq_key) $("llm").value = "sim";
   } catch {
     $("health").textContent = "backend unreachable";

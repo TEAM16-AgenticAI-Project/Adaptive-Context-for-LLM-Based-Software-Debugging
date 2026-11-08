@@ -57,6 +57,7 @@ def test_lists_the_stakeholder_cases_and_the_benchmark(client):
     if "case:thefuck-16" in ex:                                                  # listed, but needs its test env
         assert ex["case:thefuck-16"]["multi"] and not ex["case:thefuck-16"]["ready"]
     assert client.get("/").status_code == 200 and "Adaptive-Context Debugger" in client.get("/").text
+    assert client.get("/api/health").json()["model"]                              # shown in the LLM picker
 
 
 def test_agent_verify_job_on_auth_bug_shows_the_change_and_the_check(client, monkeypatch):
