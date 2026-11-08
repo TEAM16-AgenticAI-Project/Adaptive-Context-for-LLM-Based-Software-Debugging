@@ -1,0 +1,28 @@
+# Run the web UI locally:  docker compose up --build   then open http://localhost:8000
+# Put GROQ_API_KEY in a .env file next to this one to enable the real model.
+services:
+  debugger:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DEFAULT_LLM: ${DEFAULT_LLM:-sim}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      ALLOW_LOCAL_PATH: ${ALLOW_LOCAL_PATH:-0}
+      ALLOW_GIT_CLONE: ${ALLOW_GIT_CLONE:-1}
+      # running a repository's tests executes its code; only enable for code you trust
+      ALLOW_RUN_TESTS: ${ALLOW_RUN_TESTS:-0}
+      RATE_LIMIT_PER_MIN: ${RATE_LIMIT_PER_MIN:-30}
+      MAX_CONCURRENT_RUNS: ${MAX_CONCURRENT_RUNS:-2}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g

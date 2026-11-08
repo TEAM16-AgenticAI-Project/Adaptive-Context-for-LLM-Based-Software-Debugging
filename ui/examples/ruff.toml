@@ -1,0 +1,6 @@
+# The example repositories contain bugs on purpose (that is what the debugger finds),
+# so lint rules that would point at the bug are switched off here.
+extend = "../../pyproject.toml"
+
+[lint]
+ignore = ["E741", "F841"]

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adaptive-Context Debugger</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%234493f8'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Adaptive-Context Debugger</h1>
+    <p class="sub">Find the buggy function in a Python repository, with the evidence the model actually read.</p>
+  </div>
+  <nav class="views">
+    <button class="view-btn active" data-view="debug" type="button">Debug</button>
+    <button class="view-btn" data-view="how" type="button">How it works</button>
+  </nav>
+  <span id="server-pill" class="pill">connecting...</span>
+</header>
+
+<main>
+<!-- ======================= DEBUG VIEW ======================= -->
+<section id="view-debug" class="view">
+  <div class="layout">
+    <form id="form" class="panel form" autocomplete="off">
+      <h2><span class="num">1</span> Repository</h2>
+      <div class="tabs" id="source-tabs" role="tablist">
+        <button type="button" class="tab active" data-source="example">Examples</button>
+        <button type="button" class="tab" data-source="generated">Generated case</button>
+        <button type="button" class="tab" data-source="upload">Upload .zip</button>
+        <button type="button" class="tab" data-source="git">Git URL</button>
+        <button type="button" class="tab hidden" data-source="local">Server path</button>
+      </div>
+
+      <div class="source" data-source="example">
+        <select id="example-select"></select>
+        <p class="hint" id="example-hint"></p>
+        <a id="example-download" class="link" href="#" download>Download this example as .zip</a>
+      </div>
+
+      <div class="source hidden" data-source="generated">
+        <div class="row">
+          <label>Seed <input id="gen-seed" type="number" min="0" max="10000000" value="0"></label>
+          <label>Size
+            <select id="gen-size"><option value="small">small</option><option value="medium" selected>medium</option><option value="large">large</option></select>
+          </label>
+          <button id="gen-random" type="button" class="ghost">Random</button>
+        </div>
+        <p class="hint" id="gen-hint">A synthetic call-chain bug from the benchmark generator. The simulator can solve these, so this is the free way to see the adaptive loop beat the baseline.</p>
+      </div>
+
+      <div class="source hidden" data-source="upload">
+        <input id="zip" type="file" accept=".zip,application/zip">
+        <p class="hint" id="upload-hint">A .zip of a Python project.</p>
+      </div>
+
+      <div class="source hidden" data-source="git">
+        <input id="git-url" type="text" placeholder="https://github.com/owner/repo">
+        <p class="hint" id="git-hint">Public repository. A browser URL is fine; a /tree/branch link picks that branch.</p>
+      </div>
+
+      <div class="source hidden" data-source="local">
+        <input id="local-path" type="text" placeholder="/path/on/the/server">
+        <p class="hint">A directory on the server host.</p>
+      </div>
+
+      <h2><span class="num">2</span> Bug report</h2>
+      <textarea id="bug-report" rows="5" maxlength="20000" placeholder="What fails, with what input, and what you expected. A failing test's output works well."></textarea>
+
+      <h2><span class="num">3</span> Systems to run</h2>
+      <div id="systems" class="checks"></div>
+
+      <h2><span class="num">4</span> Model</h2>
+      <div id="llms" class="radios"></div>
+      <p id="sim-warning" class="note hidden"></p>
+
+      <details class="advanced">
+        <summary>Advanced settings</summary>
+        <div class="grid">
+          <label>Token budget <input id="budget" type="number" min="300" max="32000" step="100"></label>
+          <label>Max rounds <input id="rounds" type="number" min="1" max="12"></label>
+          <label>Initial Top-K <input id="top-k" type="number" min="1" max="30"></label>
+          <label>Prefetch depth <input id="prefetch" type="number" min="0" max="4"></label>
+          <label class="span2">Groq model <input id="model" type="text" placeholder="server default"></label>
+        </div>
+        <div id="verify-box" class="hidden">
+          <label class="inline"><input id="verify" type="checkbox"> Verify the suggested fix by running the repository's test</label>
+          <label class="span2">Test path for uploads / git (relative) <input id="test-path" type="text" placeholder="tests/test_x.py::test_y"></label>
+        </div>
+      </details>
+
+      <button id="run" type="submit" class="run">Diagnose</button>
+      <p id="status" class="status" role="status"></p>
+    </form>
+
+    <section id="results" class="results">
+      <div id="empty" class="panel empty">
+        <h2>Results appear here</h2>
+        <p>Pick an example and press <strong>Diagnose</strong>. The default compares the static baseline with the adaptive system on the same repository.</p>
+        <ul class="tips">
+          <li><strong>Simulator</strong> runs offline for free. It only solves <em>Generated case</em> bugs, so that tab is selected by default when no Groq key is set. On real code it still shows which evidence each system retrieved.</li>
+          <li><strong>Groq</strong> uses a real model and can diagnose the bundled and uploaded examples.</li>
+        </ul>
+      </div>
+
+      <div id="output" class="hidden">
+        <div class="panel summary">
+          <div id="summary-line"></div>
+          <div id="answer-line" class="answer hidden"></div>
+          <div id="note-line" class="note hidden"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Comparison</h2>
+            <button id="download-json" type="button" class="ghost small">Download JSON</button>
+          </div>
+          <div class="table-wrap"><table id="compare"></table></div>
+        </div>
+
+        <div class="panel">
+          <div class="tabs" id="run-tabs"></div>
+          <div id="run-detail"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</section>
+
+<!-- ======================= HOW IT WORKS ======================= -->
+<section id="view-how" class="view hidden">
+  <div class="panel">
+    <h2>Pipeline</h2>
+    <p>Each system receives only the repository and the bug report. When an example has a known answer, the answer is used after the run to score it and is never part of the prompt.</p>
+    <div class="flow">
+      <div class="step"><b>Index</b><span>AST chunks per function and method; module code in bounded chunks; imports and calls recorded</span></div>
+      <div class="arrow">&rarr;</div>
+      <div class="step"><b>Retrieve</b><span>BM25 search on the bug report; exact symbol lookup; import-aware callees</span></div>
+      <div class="arrow">&rarr;</div>
+      <div class="step"><b>Pack</b><span>Token budget for the whole prompt; compress low-priority chunks; requested code is pinned</span></div>
+      <div class="arrow">&rarr;</div>
+      <div class="step"><b>Order</b><span>Callers before callees, so the prompt reads like the call chain</span></div>
+      <div class="arrow">&rarr;</div>
+      <div class="step"><b>Ask the model</b><span>Diagnose now, or request symbols/queries (adaptive) or call tools (agent)</span></div>
+    </div>
+    <p class="loop">Adaptive and agent systems loop back to <b>Retrieve</b> until the model diagnoses, a request finds nothing new, or the round limit is reached.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Systems</h2>
+    <table class="plain" id="how-systems"></table>
+  </div>
+
+  <div class="panel">
+    <h2>Compression levels</h2>
+    <table class="plain">
+      <tr><th>full</th><td>The function as written.</td></tr>
+      <tr><th>trimmed</th><td>Comments and long docstrings removed; the body is intact. Requested code never goes below this.</td></tr>
+      <tr><th>outline</th><td>Signature, first docstring line, and return/raise/assert lines.</td></tr>
+      <tr><th>signature</th><td>Signature and first docstring line only.</td></tr>
+      <tr><th>note</th><td>One-line stand-in for requested code that no longer fits: signature, docstring line, return lines.</td></tr>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Scores</h2>
+    <table class="plain">
+      <tr><th>Correct</th><td>The diagnosed file and function match the known answer.</td></tr>
+      <tr><th>Grounded</th><td>Correct, and the buggy function was in the prompt at outline level or better.</td></tr>
+      <tr><th>Fix check</th><td>Generated cases: the suggested line is applied and the case's test is run. Other repositories: only when the server allows running tests.</td></tr>
+    </table>
+  </div>
+</section>
+</main>
+
+<footer>
+  <span id="footer-info"></span>
+</footer>
+
+<template id="tpl-evidence">
+  <details class="ev">
+    <summary><span class="ev-id"></span><span class="ev-tags"></span></summary>
+    <pre class="code"></pre>
+  </details>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

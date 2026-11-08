@@ -1,0 +1,8 @@
+cart_total([(100.0, 1)], discount_rate=0.20, tax_rate=0.10) returns 110.0 but should return 88.0.
+
+Expected: the customer gets 20% off, then pays 10% tax on the discounted amount:
+  100 * (1 - 0.20) * (1 + 0.10) = 88.0
+
+Actual: it returns 110.0, which is 100 * (1 + 0.10) — the discount is never applied.
+The tax looks like it is charged on the full price instead of the discounted price.
+Find the root-cause function and suggest a fix.

@@ -1,0 +1,6 @@
+--- a/kernel.py
++++ b/kernel.py
+@@ -1,2 +1,2 @@
+ def fold(value):
+-    return value > 18
++    return value >= 18

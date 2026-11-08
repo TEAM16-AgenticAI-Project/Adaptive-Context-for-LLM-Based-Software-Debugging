@@ -1,0 +1,30 @@
+# Render Blueprint: free web service built from the Dockerfile at the repository root.
+# Render -> New -> Blueprint -> this repository and branch.
+services:
+  - type: web
+    name: adaptive-context-debugger
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DEFAULT_LLM
+        value: sim
+      - key: GROQ_API_KEY
+        sync: false            # Render asks for it in the dashboard; leave empty for simulator only
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: ALLOW_LOCAL_PATH
+        value: "0"
+      - key: ALLOW_GIT_CLONE
+        value: "1"
+      - key: ALLOW_RUN_TESTS
+        value: "0"
+      - key: RATE_LIMIT_PER_MIN
+        value: "20"
+      - key: MAX_CONCURRENT_RUNS
+        value: "1"

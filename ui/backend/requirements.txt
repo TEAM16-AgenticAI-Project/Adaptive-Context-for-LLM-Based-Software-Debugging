@@ -1,0 +1,8 @@
+# Web service dependencies. The engine itself (src/adaptive_context) is standard library only.
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.33
+# LangGraph agent system (optional; the UI disables "agent" if it is missing)
+langgraph==1.2.20
+# fix verification runs the repository's tests with pytest (only when ALLOW_RUN_TESTS=1)
+pytest==9.2.0
