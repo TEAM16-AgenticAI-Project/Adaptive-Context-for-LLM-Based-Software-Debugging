@@ -516,6 +516,7 @@ class TestOracle:
         lines = [f"Your fix changed {len(edits)} place(s) in {len(changed)} file(s): {', '.join(changed)}."]
         if not target["passed"]:
             lines.append(f"The failing test still fails:\n{failure_excerpt(target['output'])}")
+            still, suggest = [], ()                     # one thing at a time: make the failing test pass first
         else:
             lines.append("The failing test now passes.")
         if regressions:
@@ -528,8 +529,7 @@ class TestOracle:
             lines.append("Related tests about the same functions still fail, so the same defect may exist in other "
                          "places (e.g. sibling implementations): " + ", ".join(still[:6]))
         if suggest:
-            done = (f" Your change to {edits[0].file}::{edits[0].function} makes the failing test pass; the same "
-                    "correction is probably needed there." if target["passed"] else
-                    " Add the same correction for each of these places in other_changes.")
-            lines.append(f"Likely the same defect in: {', '.join(suggest)} (added to CONTEXT).{done}")
+            lines.append(f"Likely the same defect in: {', '.join(suggest)} (added to CONTEXT). Your change to "
+                         f"{edits[0].file}::{edits[0].function} makes the failing test pass; the same correction is "
+                         "probably needed there.")
         return "\n".join(lines)

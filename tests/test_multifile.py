@@ -194,11 +194,15 @@ def test_repair_loop_adds_the_sibling_after_feedback(shells):
 
 
 def test_best_candidate_is_kept_when_no_fix_passes(shells):
-    broken = "def app_alias(self, name):\n    raise ValueError\n"
-    script = Script([_diag(), _diag(fix=broken), _diag(fix=broken)])
+    def bash(fix):
+        return ToolCall("diagnose", {"file": "pkg/bash.py", "function": "Bash.app_alias", "cause": "c", "fix": fix,
+                                     "confidence": "high"})
+    script = Script([_diag(), bash("def app_alias(self, name):\n    raise ValueError\n"),
+                     bash("def app_alias(self, name):\n    return 'no'\n")])
     res = _agent(shells, script, max_verify=2).run("`tests/test_zsh.py::test_app_alias` fails")
     assert res.stop_reason == "verify_failed"
-    assert res.verification["target_passed"] and res.diagnosis.fix == FIXED       # the better first candidate
+    fixes = [res.diagnosis.fix] + [loc["fix"] for loc in res.diagnosis.locations]
+    assert res.verification["target_passed"] and FIXED in fixes                   # the passing zsh change survives
 
 
 def test_unittest_style_test_id_is_pinned(shells):
@@ -251,7 +255,8 @@ def test_the_same_fix_is_not_tested_twice(shells):
     from adaptive_context.agent_graph import LangGraphAgent
     from adaptive_context.chunking import load_repo_dir
     retr = BM25Retriever(chunk_repo(load_repo_dir(shells)))
-    script = Script([_diag(), _diag(), _diag(("pkg/bash.py", "Bash.app_alias"))])
+    wrong = "def app_alias(self, name):\n    return 'nope'\n"
+    script = Script([_diag(fix=wrong), _diag(fix=wrong), _diag(("pkg/bash.py", "Bash.app_alias"))])
     res = LangGraphAgent(retr, script, tools=Tools(retr, shells), verifier=counting, max_verify=3).run("zsh alias")
     assert len(calls) == 2 and res.stop_reason == "verified"
     assert "exactly the same fix as before" in script.seen[2]["prompt"]
@@ -462,3 +467,50 @@ def test_related_code_sharing_the_failing_tests_words_is_shown_first(tmp_path):
     res = LangGraphAgent(retr, script, tools=Tools(retr, str(tmp_path)), initial_k=1).run(
         "`tests/test_a.py::test_get` fails")
     assert "sh/z.py::Z.get" in [cid for cid, _ in res.context_items]            # 4 other candidates, Z is the useful one
+
+
+def test_repair_note_is_target_first_and_names_apply_failures(shells):
+    """While the failing test fails, the feedback is about that test only (no sibling places yet)."""
+    wrong = "def app_alias(self, name):\n    return 'nope'\n"
+    broken = "def app_alias(self, name):\n    return (\n"
+    script = Script([_diag(fix=wrong), _diag(fix=broken), _diag()])
+    _agent(shells, script, max_verify=3).run("`tests/test_zsh.py::test_app_alias` fails")
+    first, second = script.seen[1]["prompt"], script.seen[2]["prompt"]
+    assert "Make this test pass first" in first and "Likely the same defect" not in first
+    assert "could not be applied" in second and "no replace" in second
+
+
+def test_a_wrong_second_place_does_not_replace_the_kept_fix(shells):
+    """zsh passes the failing test and is kept; a wrong bash attempt does not become the kept fix, so the agent
+    asks for bash again and the next (right) bash attempt is combined with the kept zsh change."""
+    def bash(fix):
+        return ToolCall("diagnose", {"file": "pkg/bash.py", "function": "Bash.app_alias", "cause": "c",
+                                     "fix": fix, "confidence": "high"})
+    script = Script([_diag(), bash("def app_alias(self, name):\n    return 'still wrong'\n"), bash(FIXED)])
+    res = _agent(shells, script, max_verify=3).run("`tests/test_zsh.py::test_app_alias` fails")
+    assert res.stop_reason == "verified"
+    assert "Diagnose pkg/bash.py::Bash.app_alias again" in script.seen[2]["prompt"]
+
+
+def test_a_fix_that_only_repeats_the_kept_place_is_not_checked(shells):
+    """Live gpt-oss-120b on thefuck-16: after zsh passed and bash was asked for, the model sent zsh again. That
+    attempt is sent back without spending a fix check, and the agent asks for bash again."""
+    bash = ToolCall("diagnose", {"file": "pkg/bash.py", "function": "Bash.app_alias", "cause": "c", "fix": FIXED,
+                                 "confidence": "high"})
+    script = Script([_diag(), _diag(fix="def app_alias(self, name):\n    return 'nope'\n"), bash])
+    res = _agent(shells, script, max_verify=3).run("`tests/test_zsh.py::test_app_alias` fails")
+    assert res.stop_reason == "verified"
+    assert sum(1 for t in res.trace if t.get("verification")) == 2                  # zsh, then zsh + bash
+    assert "is already fixed and KEPT" in script.seen[2]["prompt"]
+
+
+def test_text_json_with_raw_newlines_or_cut_off_is_still_a_diagnosis():
+    pytest.importorskip("langgraph")
+    from adaptive_context.agent_graph import _calls_from_text
+    raw = '{ "action": "diagnose", "file": "a.py", "function": "f", "cause": "c",\n' \
+          '  "fix": "def f():\n    return 1\n", "confidence": "high" }'
+    [call] = _calls_from_text(raw)
+    assert call.name == "diagnose" and call.arguments["fix"] == "def f():\n    return 1\n"
+    cut = '{"action":"diagnose","file":"a.py","function":"f","fix":"def f():\\n    return 2","cause":"The value is'
+    [call] = _calls_from_text(cut)
+    assert call.arguments["file"] == "a.py" and call.arguments["fix"] == "def f():\n    return 2"

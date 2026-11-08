@@ -221,7 +221,8 @@ function render(data) {
         if (c.name === "diagnose") {
           const a = c.args || {};
           const more = (a.other_changes || []).length;
-          const ver = t.verification ? ` → fix check: <span class="${t.verification.passed ? "ok" : "no"}">${esc(t.verification.reason)}</span>` : "";
+          const ver = t.verification ? ` → fix check: <span class="${t.verification.passed ? "ok" : "no"}">${esc(t.verification.reason)}</span>`
+            : t.note ? ` → <span class="muted">${esc(t.note)}</span>` : "";
           return `<span class="diag">diagnose</span> ${esc(a.file)}::${esc(a.function)}${more ? ` +${more} more place(s)` : ""}${ver}`;
         }
         const r = (t.results || [])[i];

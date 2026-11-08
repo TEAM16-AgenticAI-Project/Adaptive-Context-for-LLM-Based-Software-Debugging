@@ -250,7 +250,7 @@ def create_app():
     def debug(bug_report: str = Form(...), mode: str = Form("agent_verify"), llm: str = Form("groq"),
               example: str = Form(None), git_url: str = Form(None), local_path: str = Form(None),
               test_cmd: str = Form(None), budget: int = Form(4000), rounds: int = Form(8), top_k: int = Form(3),
-              max_verify: int = Form(3), time_limit: int = Form(600), upload: UploadFile = File(None)):
+              max_verify: int = Form(5), time_limit: int = Form(600), upload: UploadFile = File(None)):
         if not bug_report.strip():
             raise HTTPException(400, "describe the bug first")
         if mode not in MODES or llm not in ("groq", "sim"):

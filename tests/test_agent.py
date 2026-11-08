@@ -143,7 +143,7 @@ def test_agent_verifier_feeds_back_a_failing_fix_once():
     script = ToolScript([ToolCall("diagnose", {**DIAG, "fix": WRONG_CHECKOUT}), ToolCall("diagnose", DIAG)])
     res = _agent(script, verifier=verifier).run("checkout returns the wrong amount")
     assert len(seen) == 2 and res.stop_reason == "verified" and res.verification["passed"]
-    assert "did not pass" in script.seen[1]["prompt"]
+    assert "the failing test still fails" in script.seen[1]["prompt"]      # target-first repair note
 
     always_fails = ToolScript([ToolCall("diagnose", {**DIAG, "fix": WRONG_CHECKOUT})] * 3)
     res2 = _agent(always_fails, verifier=verifier).run("checkout returns the wrong amount")

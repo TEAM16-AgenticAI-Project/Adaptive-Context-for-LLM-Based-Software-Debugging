@@ -58,6 +58,7 @@ MAX_FRAMES = 6
 _CALLED = re.compile(r"`([A-Za-z_]\w*)\(")              # a call written in backticks in the bug report
 MAX_INVALID = 2
 MAX_CALLS_PER_ROUND = 3
+MAX_REASKS = 2              # a fix that only re-sends the kept place goes back unchecked at most this often
 HISTORY_LINES = 12
 
 SYSTEM_AGENT = """You debug a Python repository from a bug report: find the defect, explain the cause from code
@@ -120,6 +121,9 @@ class AgentState(TypedDict, total=False):
     unforced: bool             # a diagnose-only round was relaxed once because the model asked for a tool
     checked: dict              # fix signature -> fix-check result (the same fix is not tested twice)
     kept: list                 # places of a fix that made the failing test pass; merged into later fixes
+    kept_left: int             # related tests still failing with the kept fix
+    asked: str                 # the place the agent asked for next (file::function)
+    reasks: int                # times a fix that only repeated the kept place was sent back unchecked
 
 
 _SALVAGE_NAME = re.compile(r'"name"\s*:\s*"(\w+)"')
@@ -209,13 +213,37 @@ def _rank(res: dict) -> tuple:
             -len(res.get("regressions", [])) - len(res.get("dangling", [])) - len(res.get("related_failing", [])))
 
 
+def _lenient_reply(text: str):
+    """parse_reply for JSON with raw newlines inside strings (models write code that way), else field salvage."""
+    dec = json.JSONDecoder(strict=False)
+    for m in re.finditer(r"\{", text or ""):
+        try:
+            obj, _ = dec.raw_decode(text[m.start():])
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and obj.get("action") in ("diagnose", "request"):
+            return obj
+    if re.search(r'"action"\s*:\s*"diagnose"', text or ""):
+        obj = {"action": "diagnose"}
+        for k, v in _SALVAGE_ARG.findall(text):
+            if k in ("file", "function", "cause", "fix", "confidence", "replace") and k not in obj:
+                try:
+                    obj[k] = json.loads(f'"{v}"', strict=False)
+                except ValueError:
+                    obj[k] = v
+        if all(obj.get(k) for k in ("file", "function", "fix")):
+            return obj
+    return None
+
+
 def _calls_from_text(text: str) -> list:
     """Fallback for models that answer in text: map the legacy JSON protocol onto tool calls."""
-    obj = parse_reply(text)
+    obj = parse_reply(text) or _lenient_reply(text)
     if obj is None:
         return []
     if obj["action"] == "diagnose":
-        return [ToolCall("diagnose", {k: obj[k] for k in ("file", "function", "cause", "fix", "confidence") if k in obj})]
+        keys = ("file", "function", "cause", "fix", "confidence", "replace", "other_changes")
+        return [ToolCall("diagnose", {k: obj[k] for k in keys if k in obj})]
     calls = [ToolCall("read_function", {"name": s}) for s in obj.get("symbols") or []]
     calls += [ToolCall("search_code", {"query": q}) for q in obj.get("queries") or []]
     return calls[:MAX_CALLS_PER_ROUND]
@@ -551,6 +579,22 @@ class LangGraphAgent:
         """Test-driven repair: apply the candidate (all its locations) in a copy, run the tests, feed back."""
         d, stats, trace = s["diagnosis"], s["stats"], list(s["trace"])
         kept = s.get("kept") or []
+        asked, reasks = s.get("asked") or "", s.get("reasks", 0)
+        if kept and asked and reasks < MAX_REASKS and all(any(_same_place(p, k) for k in kept) for p in _places(d)):
+            # the model rewrote the part that already works instead of the missing place: no fix check spent
+            done = ", ".join(f"{k['file']}::{k['function']}" for k in kept)
+            log.info("  the fix only changes the kept place again; asking for %s (no fix check spent)", asked)
+            if trace:
+                trace[-1] = {**trace[-1], "note": f"only repeated the kept change; asked for {asked}"}
+            note = (f"{done} is already fixed and KEPT (the failing test passes with it): do not change it again. "
+                    f"The remaining place is {asked} (in CONTEXT). Diagnose it now: set file and function to it and "
+                    "give its corrected code in fix.")
+            best = s.get("best") or {}
+            return {"note": note, "trace": trace, "reasks": reasks + 1, "forced": False, "stalls": 0,
+                    "extra_rounds": s.get("extra_rounds", 0) + 1,
+                    "history": s["history"] + [f"round {s['round']}: diagnose({d.file}::{d.function}) repeated "
+                                               "the kept change; not checked"],
+                    "diagnosis": best.get("diagnosis", d)}
         if kept:
             merged = _with_kept(d, kept)
             if merged is not d:
@@ -590,12 +634,15 @@ class LangGraphAgent:
                "diagnosis": d}
         if res.get("passed"):
             return {**out, "stop": "verified"}
-        if res.get("target_passed") and not res.get("regressions") and res.get("applied", True):
+        left = len(res.get("related_failing", [])) + len(res.get("dangling", []))
+        if (res.get("target_passed") and not res.get("regressions") and res.get("applied", True)
+                and left < s.get("kept_left", 10 ** 6)):
             kept = _places(d)                              # this part works: keep it, look for the rest
+            out["kept_left"] = left                        # a later fix replaces it only if fewer tests still fail
         if attempts <= self.max_verify:
             pool, pinned = dict(s["pool"]), set(s["pinned"])
             added = []
-            for loc in res.get("suggest") or []:          # where the same defect probably is: show it in full
+            for loc in (res.get("suggest") or []) if res.get("target_passed") else []:   # where else the defect is
                 for c in self.tools.resolve(loc)[:1]:
                     if c.id not in pinned:
                         pinned.add(c.id)
@@ -607,13 +654,32 @@ class LangGraphAgent:
             where = ", ".join(dict.fromkeys([d.file] + [loc["file"] for loc in d.locations]))
             todo = [loc for loc in res.get("suggest") or [] if not any(
                 _same_place({"file": loc.split("::")[0], "function": loc.split("::")[-1]}, k) for k in kept)]
-            if res.get("target_passed") and kept and todo:
+            tried = [p for p in _places(d) if not any(_same_place(p, k) for k in kept)]   # beyond the kept fix
+            if res.get("target_passed") and kept and not todo and tried and res.get("related_failing"):
+                again = f"{tried[0]['file']}::{tried[0]['function']}"
+                note = (f"Your change to {', '.join(k['file'] + '::' + k['function'] for k in kept)} still makes the "
+                        f"failing test pass and stays KEPT, but your change to {again} did not fix its tests (still "
+                        f"failing: {', '.join(res['related_failing'][:3])}; the test is in CONTEXT). Diagnose {again} "
+                        "again: set file and function to it and give its corrected code in fix.")
+                log.info("  kept change still passes; asking for %s again", again)
+                out["asked"] = again
+            elif res.get("target_passed") and kept and todo:
                 # one place at a time: small models rewrite the part that works instead of adding the missing one
                 note = (f"Your change to {', '.join(k['file'] + '::' + k['function'] for k in kept)} makes the "
                         f"failing test pass and is KEPT (it is added to your next fix automatically). Related tests "
                         f"still fail because the same defect is also in {todo[0]} (in CONTEXT). Now diagnose "
                         f"{todo[0]}: set file and function to it and give its corrected code in fix.")
                 log.info("  keeping the passing change; asking for %s next", todo[0])
+                out["asked"] = todo[0]
+            elif not res.get("applied", True):
+                note = (f"Your fix could not be applied ({short(str(res.get('output', '')), 200)}). Diagnose again "
+                        "with the whole corrected function in fix: valid Python, the complete def, and no replace.")
+            elif not res.get("target_passed"):
+                # target first: small models chase the sibling places before the main fix works
+                note = (f"With your fix in {where}, the failing test still fails. FAILING TEST OUTPUT shows the "
+                        "assertion that failed and the value your code produced; the test's other assertions are in "
+                        "CONTEXT. Correct the fix so that every assertion holds (compare the expected and the actual "
+                        "text character by character), then diagnose again. Make this test pass first.")
             else:
                 note = (f"Your fix (in {where}) did not pass the checks: {res.get('reason', 'failed')}. The results "
                         "are under FAILING TEST OUTPUT. Gather evidence if needed (read_function, get_related, "
@@ -653,7 +719,7 @@ class LangGraphAgent:
 
     def run(self, bug_report: str) -> DebugResult:
         t0 = self._t0 = time.perf_counter()
-        limit = 8 * (self.max_rounds + 2 * self.max_verify) + 20
+        limit = 8 * (self.max_rounds + 2 * self.max_verify + MAX_REASKS) + 20
         final: dict[str, Any] = self.graph.invoke({"bug_report": bug_report}, {"recursion_limit": limit})
         stats: RunStats = final["stats"]
         stats.wall_s = time.perf_counter() - t0
