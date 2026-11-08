@@ -61,6 +61,21 @@ def test_parser_preserves_explicit_function_when_fix_includes_helper(function):
     assert "def normalize" in result.fix and "def checkout" in result.fix
 
 
+@pytest.mark.parametrize("prefix", ["", "async "])
+def test_parser_infers_a_single_class_qualified_method(prefix):
+    text = SAMPLE.replace("def checkout(price):\n    return price * 0.8",
+                          f"class Checkout:\n    {prefix}def apply(self, price):\n        return price * 0.8")
+    result = baseline.parse_output(text)
+    assert result.valid and result.function == "Checkout.apply"
+
+
+def test_parser_does_not_guess_between_multiple_class_methods():
+    text = SAMPLE.replace("def checkout(price):\n    return price * 0.8",
+                          "class Checkout:\n    def first(self):\n        pass\n    def second(self):\n        pass")
+    result = baseline.parse_output(text)
+    assert result.valid and result.function == "<module>"
+
+
 def test_actual_command_contains_only_buggy_repo_and_report(tmp_path, monkeypatch):
     case = fixture_case(tmp_path)
     upstream = tmp_path / "upstream"
