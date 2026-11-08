@@ -5,8 +5,11 @@ Deep's original contribution on `deep/datasets-baselines` was merged through
 [PR #7](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/7).
 Follow-up integration fixes and verification were merged through
 [PR #10](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/10).
-The current [adapter follow-ups](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/tree/deep/m2-evidence-followups)
-are based on main `4d7c241`, which also includes Karthik's real-case runner (PR #11).
+The adapter follow-ups are merged through
+[PR #13](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/pull/13).
+The current [final adapter checks](https://github.com/TEAM16-AgenticAI-Project/Adaptive-Context-for-LLM-Based-Software-Debugging/tree/deep/m2-final-adapter-checks)
+are based on main `044ebd8`, which includes Karthik's real-case runner (PR #11)
+and evaluation script (PR #12).
 Experiment files record their producing commits individually; the
 group must record the final merged submission commit after review and the final
 evaluation. The repository was public when checked on November 1, 2026.
@@ -24,6 +27,9 @@ validate captured response/window data while allowing later cases to continue,
 and fingerprint evaluation manifests and bug reports. Each implementation change
 has regression coverage and is committed under Deep's configured author identity;
 the dated evidence directory records its producing revision.
+The November 8 follow-ups add unambiguous class-qualified method inference and
+redacted diagnostics for malformed captures and process-launch errors, with
+regressions and committed-source validation in `results/deep/nov8_submission/`.
 
 The table describes work rather than using commit counts as a proxy for effort.
 [The generated history inventory](../../results/deep/contributions.md) supports

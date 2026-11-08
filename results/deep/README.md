@@ -9,10 +9,13 @@ audit and Tanay's verifier on one branch and includes a clean-checkout gate.
 The [November 1 command checks](final_check/README.md) rerun both CLI actions and
 controlled validation on committed revision `9af7cc9`, after repairing the local
 package installation.
-The latest [November 4 follow-up checks](nov4_followups/README.md) validate the
+The [November 4 follow-up checks](nov4_followups/README.md) validate the
 adapter fixes and input fingerprints on main `4d7c241` plus Deep's new commits.
 The [timeout follow-up](nov4_timeout/README.md) adds committed-source regression
 evidence for preserving redacted diagnostics from interrupted stakeholder runs.
+The latest [November 8 adapter checks](nov8_submission/README.md) cover
+class-qualified method inference and diagnostics for capture/startup failures
+against committed source based on main `044ebd8`.
 
 | Artifact | Scope and producing revision |
 | --- | --- |
