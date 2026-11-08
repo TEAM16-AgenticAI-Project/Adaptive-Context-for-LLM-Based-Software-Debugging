@@ -185,6 +185,15 @@ def _hunks(code: str) -> list | None:
     return [h for h in out if h[0].strip() or h[1].strip()] or None
 
 
+def _defines(code: str, short: str) -> bool:
+    """Whether `code` is (decorators plus) a definition of function `short`."""
+    try:
+        body = ast.parse(textwrap.dedent(strip_fences(code))).body
+    except SyntaxError:
+        return False
+    return any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == short for n in body)
+
+
 def _apply_one(src: str, e: Edit) -> tuple:
     """Return (new source, problem or ''). Replacing an existing function, imports + function, or a single corrected
     line is fixcheck.apply_fix_to_source (the same rules the single-function fix check uses). This adds what
@@ -230,9 +239,12 @@ def _apply_one(src: str, e: Edit) -> tuple:
         except FixError:
             lo, hi = 0, len(lines)
         out = _replace_lines(lines, lo, hi, e.old, e.code)
-        if out is None:
+        if out is not None:
+            return "".join(out), ""
+        if not _defines(code, name.split(".")[-1]):
             return src, f"the lines to replace were not found in {e.file}::{e.function}"
-        return "".join(out), ""
+        # `replace` does not match the file (models often repeat the new code there), but fix is the whole
+        # function: replace the function instead
     try:
         new, _ = apply_fix_to_source(src, name, code)
         return new, ""
@@ -516,9 +528,8 @@ class TestOracle:
             lines.append("Related tests about the same functions still fail, so the same defect may exist in other "
                          "places (e.g. sibling implementations): " + ", ".join(still[:6]))
         if suggest:
-            keep = (f" Keep your change to {edits[0].file}::{edits[0].function} as it is (the failing test passes). "
-                    if target["passed"] else " ")
-            lines.append(f"Likely the same defect in: {', '.join(suggest)} (added to CONTEXT).{keep}"
-                         "Diagnose again with that change in fix and the same correction for each of these places "
-                         "in other_changes.")
+            done = (f" Your change to {edits[0].file}::{edits[0].function} makes the failing test pass; the same "
+                    "correction is probably needed there." if target["passed"] else
+                    " Add the same correction for each of these places in other_changes.")
+            lines.append(f"Likely the same defect in: {', '.join(suggest)} (added to CONTEXT).{done}")
         return "\n".join(lines)

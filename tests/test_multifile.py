@@ -345,7 +345,7 @@ def test_oracle_names_the_sibling_function_to_change(shells):
     one = oracle.check([Edit("pkg/zsh.py", "Zsh.app_alias", FIXED)])
     assert one["suggest"] == ["pkg/bash.py::Bash.app_alias"]
     assert "Likely the same defect in: pkg/bash.py::Bash.app_alias" in one["output"]
-    assert "Keep your change to pkg/zsh.py::Zsh.app_alias" in one["output"]
+    assert "Your change to pkg/zsh.py::Zsh.app_alias makes the failing test pass" in one["output"]
 
 
 def test_suggested_sibling_is_pinned_for_the_next_diagnosis(shells):
@@ -416,3 +416,49 @@ def test_suggestions_work_for_module_level_functions(tmp_path):
     fix = "def name():\n    return 2\n"
     assert oracle.check([Edit("pkg/a.py", "name", fix)])["suggest"] == ["pkg/b.py::name"]
     assert oracle.check([Edit("pkg/a.py", "name", fix), Edit("pkg/b.py", "name", fix)])["passed"]
+
+
+# ---------------------------------------------------------------- live run 4 findings (gpt-oss-20b on thefuck-16/17)
+def test_a_passing_part_is_kept_and_the_model_is_asked_for_the_other_place(shells):
+    """The model fixes zsh (the failing test passes) but keeps rewriting zsh instead of adding bash. The agent keeps
+    the zsh change, asks for bash alone, and tests the two together."""
+    bash_only = ToolCall("diagnose", {"file": "pkg/bash.py", "function": "Bash.app_alias", "cause": "same quotes",
+                                      "fix": FIXED, "confidence": "high"})
+    script = Script([_diag(), bash_only])
+    res = _agent(shells, script, max_verify=2).run("`tests/test_zsh.py::test_app_alias` fails")
+    assert res.stop_reason == "verified"
+    assert "is KEPT" in script.seen[1]["prompt"] and "Now diagnose pkg/bash.py::Bash.app_alias" in script.seen[1]["prompt"]
+    places = {(res.diagnosis.file, res.diagnosis.function)} | {(x["file"], x["function"]) for x in res.diagnosis.locations}
+    assert places == {("pkg/bash.py", "Bash.app_alias"), ("pkg/zsh.py", "Zsh.app_alias")}
+    assert res.verification["files_changed"] == ["pkg/bash.py", "pkg/zsh.py"]
+
+
+def test_replace_text_that_is_not_in_the_file_falls_back_to_the_whole_function(shells):
+    res = apply_edits(shells, [Edit("pkg/zsh.py", "Zsh.app_alias", FIXED, old=FIXED)])    # replace == the new code
+    assert res.problems == [] and "\"='fk'\"" in _src(shells, "pkg/zsh.py")
+    res = apply_edits(shells, [Edit("pkg/bash.py", "Bash.app_alias", "return 1", old="not in the file")])
+    assert res.problems and "were not found" in res.problems[0]                          # a fragment still fails
+
+
+def test_related_code_sharing_the_failing_tests_words_is_shown_first(tmp_path):
+    pytest.importorskip("langgraph")
+    from adaptive_context.agent_graph import LangGraphAgent
+    from adaptive_context.chunking import load_repo_dir
+    files = {"sh/base.py": "class Base:\n    def get(self):\n        return {}\n",
+             "tests/test_a.py": "import os\nfrom sh.a import A\n\n\ndef test_get():\n"
+                                "    os.environ['MAGIC_ALIASES'] = 'x=y'\n    assert A().get() == {'x': 'y'}\n"}
+    for name in "abcd":
+        files[f"sh/{name}.py"] = f"from .base import Base\n\n\nclass {name.upper()}(Base):\n    def get(self):\n" \
+                                 f"        return {{'{name}': Popen_{name}()}}\n"
+    files["sh/z.py"] = ("import os\nfrom .base import Base\n\n\nclass Z(Base):\n    def get(self):\n"
+                        "        raw = os.environ.get('MAGIC_ALIASES', '')\n        return dict(raw.split('='))\n")
+    for rel, text in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    retr = BM25Retriever(chunk_repo(load_repo_dir(str(tmp_path))))
+    script = Script([ToolCall("read_function", {"name": "sh/a.py::A.get"}),
+                     ToolCall("diagnose", {"file": "sh/a.py", "function": "A.get", "cause": "c", "fix": "x",
+                                           "confidence": "low"})])
+    res = LangGraphAgent(retr, script, tools=Tools(retr, str(tmp_path)), initial_k=1).run(
+        "`tests/test_a.py::test_get` fails")
+    assert "sh/z.py::Z.get" in [cid for cid, _ in res.context_items]            # 4 other candidates, Z is the useful one

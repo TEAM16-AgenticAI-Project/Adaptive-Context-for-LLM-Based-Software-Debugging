@@ -28,6 +28,7 @@ Requires `pip install -e ".[agent]"` (langgraph).
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -118,6 +119,7 @@ class AgentState(TypedDict, total=False):
     last_retry: bool           # the one extra round after an invalid reply on the last round was used
     unforced: bool             # a diagnose-only round was relaxed once because the model asked for a tool
     checked: dict              # fix signature -> fix-check result (the same fix is not tested twice)
+    kept: list                 # places of a fix that made the failing test pass; merged into later fixes
 
 
 _SALVAGE_NAME = re.compile(r'"name"\s*:\s*"(\w+)"')
@@ -170,6 +172,35 @@ def _signature(d) -> str:
     from .multifix import edits_from_diagnosis
     return json.dumps([[e.file, e.function, " ".join(e.code.split()), " ".join(e.old.split())]
                        for e in edits_from_diagnosis(d)])
+
+
+def _places(d) -> list:
+    """Every place a diagnosis changes, as other_changes-style dicts (the primary location first)."""
+    first = {"file": d.file, "function": d.function, "fix": d.fix}
+    if d.replace:
+        first["replace"] = d.replace
+    return [first] + [dict(loc) for loc in d.locations]
+
+
+def _same_place(a: dict, b: dict) -> bool:
+    fa, fb = a["file"].lstrip("./"), b["file"].lstrip("./")
+    return (fa.endswith(fb) or fb.endswith(fa)) and a["function"].split(".")[-1] == b["function"].split(".")[-1]
+
+
+def _with_kept(d, kept: list):
+    """Add the kept places (from a fix whose failing test passed) that the new diagnosis does not change itself, so
+    a model can fix a multi-file bug one place at a time and the agent tests the combination."""
+    mine = _places(d)
+    extra = [k for k in kept if not any(_same_place(k, m) for m in mine)]
+    return dataclasses.replace(d, locations=(list(d.locations) + extra)[:MAX_LOCATIONS]) if extra else d
+
+
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{3,}")
+_TEST_FILE = re.compile(r"(^|/)tests?/|(^|/)test_[^/]*$|_test\.py$")
+
+
+def _is_test_path(path: str) -> bool:
+    return bool(_TEST_FILE.search(path))
 
 
 def _rank(res: dict) -> tuple:
@@ -411,7 +442,7 @@ class LangGraphAgent:
                 if rel is None:                                   # stdlib / site-packages: keep the raise site
                     continue
                 last = None
-                if re.search(r"(^|/)tests?/|(^|/)test_[^/]*$|_test\.py$", rel):
+                if _is_test_path(rel):
                     continue
                 hit = [c for c in spans.get(rel, []) if c.start <= int(num) <= c.end]
                 if hit:
@@ -460,8 +491,10 @@ class LangGraphAgent:
             if self.auto_related and call.name == "read_function":
                 # multi-file awareness at low cost: the same method in the base class and in sibling classes
                 # enters the pool as low-priority neighbours (compressed or dropped first under the budget)
-                auto = [c for ch, _ in r.chunks for _, c in self.tools.related(ch)
-                        if c.id not in pool and c.id not in pinned][:3]
+                cands = list({c.id: c for ch, _ in r.chunks for _, c in self.tools.related(ch)
+                              if c.id not in pool and c.id not in pinned}.values())
+                focus = self._focus(s, pinned) if len(cands) > 3 else set()
+                auto = sorted(cands, key=lambda c: -len(focus & set(_WORD.findall(c.text))))[:3]
                 for c in auto:
                     pool[c.id] = [c, NEIGHBOUR - 1]
                 if auto:
@@ -507,9 +540,23 @@ class LangGraphAgent:
                 "test_output": test_output, "forced": forced, "stalls": stalls, "note": note, "calls": [],
                 "seen_calls": seen}
 
+    def _focus(self, s: AgentState, pinned) -> set:
+        """Words of the bug report and of the failing tests' files: related implementations sharing more of them
+        (e.g. the sibling that already reads the environment variable the test sets) are shown first."""
+        tests = {c.path for c in self.retriever.chunks if c.id in pinned and _is_test_path(c.path)}
+        text = s["bug_report"] + " " + " ".join(c.text for c in self.retriever.chunks if c.path in tests)
+        return set(_WORD.findall(text))
+
     def _verify(self, s: AgentState) -> dict:
         """Test-driven repair: apply the candidate (all its locations) in a copy, run the tests, feed back."""
         d, stats, trace = s["diagnosis"], s["stats"], list(s["trace"])
+        kept = s.get("kept") or []
+        if kept:
+            merged = _with_kept(d, kept)
+            if merged is not d:
+                log.info("  adding the kept change(s) %s to this fix",
+                         ", ".join(f"{k['file']}::{k['function']}" for k in kept if k not in _places(d)))
+            d = merged
         attempts = s["verify_attempts"] + 1
         if self._expired():
             log.warning("time limit of %.0fs reached: keeping the diagnosis without checking it", self.time_limit)
@@ -539,9 +586,12 @@ class LangGraphAgent:
         best = s.get("best") or {}
         if not best or _rank(res) > _rank(best["verification"]):
             best = {"diagnosis": d, "verification": res}
-        out = {"verification": res, "verify_attempts": attempts, "trace": trace, "best": best, "checked": checked}
+        out = {"verification": res, "verify_attempts": attempts, "trace": trace, "best": best, "checked": checked,
+               "diagnosis": d}
         if res.get("passed"):
             return {**out, "stop": "verified"}
+        if res.get("target_passed") and not res.get("regressions") and res.get("applied", True):
+            kept = _places(d)                              # this part works: keep it, look for the rest
         if attempts <= self.max_verify:
             pool, pinned = dict(s["pool"]), set(s["pinned"])
             added = []
@@ -555,17 +605,27 @@ class LangGraphAgent:
                 log.info("  likely the same defect in: %s (pinned)", ", ".join(added))
             out.update(pool=pool, pinned=frozenset(pinned))
             where = ", ".join(dict.fromkeys([d.file] + [loc["file"] for loc in d.locations]))
-            note = (f"Your fix (in {where}) did not pass the checks: {res.get('reason', 'failed')}. The results "
-                    "are under FAILING TEST OUTPUT. Gather evidence if needed (read_function, get_related, "
-                    "get_callers), then diagnose again with ALL the changes: fix plus other_changes.")
+            todo = [loc for loc in res.get("suggest") or [] if not any(
+                _same_place({"file": loc.split("::")[0], "function": loc.split("::")[-1]}, k) for k in kept)]
+            if res.get("target_passed") and kept and todo:
+                # one place at a time: small models rewrite the part that works instead of adding the missing one
+                note = (f"Your change to {', '.join(k['file'] + '::' + k['function'] for k in kept)} makes the "
+                        f"failing test pass and is KEPT (it is added to your next fix automatically). Related tests "
+                        f"still fail because the same defect is also in {todo[0]} (in CONTEXT). Now diagnose "
+                        f"{todo[0]}: set file and function to it and give its corrected code in fix.")
+                log.info("  keeping the passing change; asking for %s next", todo[0])
+            else:
+                note = (f"Your fix (in {where}) did not pass the checks: {res.get('reason', 'failed')}. The results "
+                        "are under FAILING TEST OUTPUT. Gather evidence if needed (read_function, get_related, "
+                        "get_callers), then diagnose again with ALL the changes: fix plus other_changes.")
             hist = s["history"] + [f"round {s['round']}: diagnose({d.file}::{d.function}"
                                    f"{' +' + str(len(d.locations)) if d.locations else ''}) -> fix check "
                                    f"{res.get('reason', 'failed')}"]
             feedback = str(res.get("output", ""))[-1500:]
             # two more rounds per failed check: one to look, one to re-diagnose; tools allowed again
             return {**out, "note": note, "history": hist, "test_output": feedback or s["test_output"],
-                    "diagnosis": d, "stats": stats, "extra_rounds": s.get("extra_rounds", 0) + 2,
-                    "forced": False, "stalls": 0}
+                    "stats": stats, "extra_rounds": s.get("extra_rounds", 0) + 2,
+                    "forced": False, "stalls": 0, "kept": kept}
         return {**out, "stop": "verify_failed"}
 
     # ------------------------------------------------------------------ routing
