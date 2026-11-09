@@ -1,0 +1,72 @@
+// Figure 1 of the Milestone 2 report: the implemented system and the planned components.
+// Render:  dot -Tpng -Gdpi=200 docs/report/figures/architecture_m2.dot -o docs/report/figures/architecture_m2.png
+// Solid = implemented and used in the Milestone 2 runs. Dashed grey = planned (docs/PHASE4_PLAN.md).
+digraph architecture {
+  graph [rankdir=TB, fontname="Carlito", fontsize=14, nodesep=0.3, ranksep=0.3, newrank=true, splines=true,
+         label="Adaptive Context, Milestone 2: implemented (solid) and planned (dashed grey)\n", labelloc=t];
+  node  [shape=box, style="rounded,filled", fontname="Carlito", fontsize=11, penwidth=1.2,
+         fillcolor="#dbe8f6", color="#3b6ea5", margin="0.12,0.05"];
+  edge  [fontname="Carlito", fontsize=10, color="#5b6670", arrowsize=0.7];
+
+  // left column: how the systems are compared, and the interfaces
+  subgraph cluster_eval {
+    label="Compared under the same index, model and fix check"; labeljust=l; fontsize=11; style="rounded"; color="#3b6ea5";
+    baselines [label="Baselines: static_k3 / static_k10\none retrieval, one LLM call"];
+    adaptive  [label="adaptive / adaptive_graph\nbounded request loop\n(+ call-graph prefetch)"];
+    runner    [label="bench: systems factory, case runner\n(run_cases --check-fixes),\ncompare.py -> comparison.md"];
+    baselines -> adaptive [style=invis]; adaptive -> runner;
+    baselines -> runner [constraint=false];
+  }
+  subgraph cluster_iface {
+    label="Interfaces"; labeljust=l; fontsize=11; style="rounded"; color="#3b6ea5";
+    cli [label="CLI: adaptive-context\ndebug / cases"];
+    mcp [label="MCP server (Phase 4 prototype):\ndiagnose_bug, localize_fault"];
+    cli -> mcp [style=invis];
+  }
+  {rank=same; baselines; seed}
+  {rank=same; cli; verify}
+  cache [label="Planned: response cache and\npaced parallel runs (PR #16)", style="rounded,dashed,filled",
+         fillcolor="#f1f1f1", color="#8a8a8a", fontcolor="#444444"];
+  runner -> cache [style=invis]; cache -> cli [style=invis];
+  cache -> runner [style=dashed, color="#9a9a9a", constraint=false];
+
+  input  [label="Bug report + Python repository\n(+ the failing test's command)", fillcolor="#d9efd9", color="#3e8a3e"];
+  index  [label="Code index (built once)\nAST function chunks, import-aware\ncall graph, BM25 (Chroma optional)"];
+
+  subgraph cluster_agent {
+    label="LangGraph agent (agent_graph.py), system agent_verify"; labeljust=l; fontsize=12;
+    style="rounded"; color="#3b6ea5"; penwidth=1.2;
+    seed    [label="seed\nBM25 search with the bug report; pin the\nfailing test, traceback frames and the\nfunctions the report names"];
+    context [label="context (context manager)\npack evidence under the token budget:\nrequested code pinned in full, anchors\nprotected, the rest compressed; callers\nbefore callees; a fresh prompt every round"];
+    plan    [label="plan (one LLM call, native tool calling)\nopenai/gpt-oss-20b via Groq:\nask for evidence, or diagnose"];
+    choice  [label="diagnose?", shape=diamond, style=filled, fillcolor="#fff2c6", color="#c9a227", margin="0.03,0.02"];
+    act     [label="act (tools.py, up to 3 calls)\nsearch_code, read_function,\nget_callers, get_callees,\nget_related, run_failing_test;\na repeated call is not run again"];
+    verify  [label="verify (multifix.TestOracle)\napply every place of the fix, in any\nfile, to a temporary copy; run the\nfailing test and related test files,\nbefore vs after the fix"];
+    passed  [label="passes?", shape=diamond, style=filled, fillcolor="#fff2c6", color="#c9a227", margin="0.03,0.02"];
+  }
+
+  output [label="Result: file(s), function(s), cause,\none diff per file, fix-check result,\ntrace, tokens and time", fillcolor="#d9efd9", color="#3e8a3e"];
+
+  input -> index -> seed -> context -> plan -> choice;
+  choice -> act    [label=" no:\n tool calls"];
+  act -> context   [label=" new\n evidence"];
+  choice -> verify [label=" yes (forced on the last round\n or when nothing new is found)"];
+  verify -> passed;
+  passed -> output [label=" yes: verified\n (or repairs used up:\n best checked fix)"];
+  passed -> context [label=" no: target-first feedback; keep a\n passing part and ask for the missing\n place; up to max_verify repairs",
+                     color="#c9a227", fontcolor="#8a6d12", constraint=false];
+  {rank=same; choice; act}
+
+  // right column: planned components, next to the stage each one changes
+  node [style="rounded,dashed,filled", fillcolor="#f1f1f1", color="#8a8a8a", fontcolor="#444444"];
+  edge [style=dashed, color="#9a9a9a", fontcolor="#666666", constraint=false];
+  graphloc [label="Planned: graph-primary localization\n(walk the call/data graph from the\nentry function) and LLM re-ranking\nof the retrieved candidates"];
+  summary  [label="Planned: role-aware\ncode summaries"];
+  tiering  [label="Planned: small planner model,\nlarge solver; early exit\non high confidence"];
+  overfit  [label="Planned: stronger verification\n(whole test module; flag fixes\nthat pass but miss the cause)"];
+  {rank=same; graphloc; seed}
+  {rank=same; summary; context}
+  {rank=same; tiering; plan}
+  {rank=same; overfit; verify}
+  graphloc -> seed; summary -> context; tiering -> plan; overfit -> verify;
+}

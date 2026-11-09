@@ -1,0 +1,63 @@
+{
+  "args": {
+    "llm": "groq",
+    "model": "openai/gpt-oss-20b"
+  },
+  "summary": {
+    "n_cases": 4,
+    "systems": {
+      "static_k3": {
+        "role": "baseline",
+        "n": 4,
+        "file_acc": 0.75,
+        "func_acc": 0.5,
+        "grounded": 0.5,
+        "tokens": 1092.5,
+        "llm_calls": 1.0,
+        "wall_s": 5.846864770719549,
+        "failures": 0,
+        "fix_rate": 0.0,
+        "target_rate": 0.0
+      },
+      "static_k10": {
+        "role": "baseline",
+        "n": 4,
+        "file_acc": 0.75,
+        "func_acc": 0.75,
+        "grounded": 0.75,
+        "tokens": 2956.5,
+        "llm_calls": 1.0,
+        "wall_s": 16.385142645507585,
+        "failures": 0,
+        "fix_rate": 0.0,
+        "target_rate": 0.0
+      },
+      "adaptive": {
+        "role": "proposed",
+        "n": 4,
+        "file_acc": 0.5,
+        "func_acc": 0.5,
+        "grounded": 0.5,
+        "tokens": 699.25,
+        "llm_calls": 0.5,
+        "wall_s": 6.8152267817931715,
+        "failures": 2,
+        "fix_rate": 0.0,
+        "target_rate": 0.0
+      },
+      "agent_verify": {
+        "role": "proposed",
+        "n": 4,
+        "file_acc": 1.0,
+        "func_acc": 0.75,
+        "grounded": 0.75,
+        "tokens": 22282.25,
+        "llm_calls": 8.25,
+        "wall_s": 192.35356958329794,
+        "failures": 4,
+        "fix_rate": 0.5,
+        "target_rate": 0.75
+      }
+    }
+  }
+}
