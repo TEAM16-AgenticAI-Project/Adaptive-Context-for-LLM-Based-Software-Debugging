@@ -1,0 +1,56 @@
+{
+  "checked_on": "2026-11-08",
+  "source_revision": "ce3f0b14b30ad3409fd84b1291fdf91502a9ebd7",
+  "main_integrated": "044ebd8",
+  "source_dirty": false,
+  "source_imports": "PYTHONPATH selects this checkout's src directory",
+  "checks": {
+    "pytest": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "returncode": 0,
+      "wall_seconds": 16.82,
+      "output": "results/deep/nov8_submission/pytest.txt"
+    },
+    "ruff": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/ruff",
+        "check",
+        "src",
+        "tests"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.05,
+      "output": "results/deep/nov8_submission/ruff.txt"
+    },
+    "stakeholder_skip": {
+      "command": [
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/.venv/bin/python",
+        "-m",
+        "adaptive_context.bench.stakeholder_baseline",
+        "--manifest",
+        "data/real/thefuck.jsonl",
+        "--repo-root",
+        "data/reproduced",
+        "--baseline-root",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-work/stakeholder",
+        "--skip-live",
+        "--out",
+        "/Users/deepnayak/Desktop/Auditor /Adaptive-Context-Deep/results/deep/nov8_submission/stakeholder"
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.36,
+      "output": "results/deep/nov8_submission/stakeholder_skip.txt"
+    }
+  },
+  "live_groq": "not_run; explicit --skip-live",
+  "scope": "Class-method parsing and capture/startup diagnostics. Earlier dataset, retrieval and fix-check experiments retain their own producing revisions.",
+  "installed_source_match": {
+    "files_checked": 33,
+    "mismatches": []
+  }
+}
