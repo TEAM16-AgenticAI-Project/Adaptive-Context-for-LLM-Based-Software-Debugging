@@ -45,19 +45,23 @@ def test_unknown_system_rejected():
         systems.make_system("nope", _FakeRetriever(), _FakeLLM())
 
 
-def test_agent_names_error_cleanly_when_module_absent():
-    # The agent module may not exist yet; make_system must raise a clear RuntimeError,
-    # not a bare ImportError, so the runner can skip it.
+def test_agent_systems_build_or_error_cleanly():
+    # Without langgraph, make_system must raise a clear RuntimeError (not a bare ImportError) so a runner can
+    # skip the agent systems; with it, the agent is built from cfg and only agent_verify keeps the verifier.
     r, llm = _FakeRetriever(), _FakeLLM()
     try:
-        from adaptive_context import agent  # noqa: F401
-        have_agent = True
+        import langgraph  # noqa: F401
     except ImportError:
-        have_agent = False
-    if have_agent:
-        pytest.skip("agent module is present, so the missing-module path cannot be tested")
-    with pytest.raises(RuntimeError):
-        systems.make_system("agent", r, llm)
+        with pytest.raises(RuntimeError):
+            systems.make_system("agent", r, llm)
+        return
+    check = lambda d: {"passed": True}  # noqa: E731
+    agent = systems.make_system("agent", r, llm, {"rounds": 4}, verifier=check)
+    verify = systems.make_system("agent_verify", r, llm, {"rounds": 4, "max_verify": 2, "time_limit": 60},
+                                 verifier=check)
+    assert agent.verifier is None and agent.max_rounds == 4
+    assert verify.verifier is check and verify.max_verify == 2 and verify.time_limit == 60
+    assert {"agent", "agent_verify"} <= set(systems.available_systems())
 
 
 def test_available_systems_lists_the_four_core():

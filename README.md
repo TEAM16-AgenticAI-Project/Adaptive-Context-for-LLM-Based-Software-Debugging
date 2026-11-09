@@ -40,7 +40,22 @@ python -m adaptive_context.cli debug examples/payment_bug --bug-report-file exam
 
 # real LLM on generated cases (rate limits apply)
 python -m adaptive_context.bench.run --llm groq --n 30 --workers 1
+
+# the agent with fix checks on the stakeholder's test cases (examples/payment_bug, examples/auth_bug)
+adaptive-context debug examples/auth_bug --bug-report-file examples/auth_bug/bug_report.txt \
+    --mode agent_verify --run-test test_auth.py
+
+# baseline vs ours on the same bugs and model -> results/m2/compare/comparison.md (LLM=sim: offline dry run)
+scripts/run_comparison.sh
+
+# web UI: pick a stakeholder case or a benchmark bug, watch the live log, see one diff per changed file
+pip install -e ".[agent,ui]"
+adaptive-context ui --env py38-pytest3=<venv38old python> --env py38-pytest6=<venv38 python>   # http://127.0.0.1:8000
 ```
+
+`agent_verify` proposes the fix as `fix` plus `other_changes` (every other function or file that needs the same or a
+related change), applies all of them in a temporary copy and reruns the failing test and the related test files.
+If a sibling implementation's test still fails, the check names that function so the next diagnosis can add it.
 
 Benchmark systems: `static_k3` (baseline), `static_wide` (static, Top-10: does "just retrieve more" win?),
 `adaptive` (LLM-driven requests), `adaptive_graph` (requests + callee prefetch).
@@ -80,8 +95,9 @@ Budget sweep (500 cases, no noise): accuracy stays 1.00 down to a 600-token budg
 src/adaptive_context/
   chunking.py retrieval.py compress.py budget.py sequencing.py protocol.py
   baseline.py adaptive.py agent_graph.py fixcheck.py llm.py sim.py cli.py models.py tokens.py
+  multifix.py (multi-location fixes + test oracle) logs.py webui/ (web UI)
   bench/generate.py bench/run.py bench/audit.py bench/stakeholder_baseline.py
-tests/test_core.py        examples/payment_bug/
+tests/test_core.py        examples/payment_bug/ examples/auth_bug/ (the stakeholder's test cases)
 ```
 
 ## Current implementation and remaining work

@@ -27,6 +27,9 @@ class Diagnosis:
     fix: str = ""
     confidence: str = ""
     valid: bool = False
+    # further places the fix needs, for bugs that span several functions or files: [{file, function, fix[, replace]}]
+    locations: list = field(default_factory=list)
+    replace: str = ""          # optional: the exact current lines that `fix` replaces (instead of a whole function)
 
 
 @dataclass
@@ -48,7 +51,7 @@ class RunStats:
 
 
 # Why a run stopped. Every debugger sets exactly one of these.
-STOP_REASONS = ("diagnosed", "forced_diagnosis", "round_limit", "invalid_exhausted", "llm_error",
+STOP_REASONS = ("diagnosed", "forced_diagnosis", "round_limit", "invalid_exhausted", "llm_error", "timeout",
                 "verified", "verify_failed")
 
 

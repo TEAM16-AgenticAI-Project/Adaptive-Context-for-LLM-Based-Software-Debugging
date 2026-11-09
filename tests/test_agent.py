@@ -56,9 +56,11 @@ def test_groq_tool_calls_are_parsed_safely():
 
 
 # ---------------------------------------------------------------- tools
-def test_schemas_cover_the_six_tools_and_diagnose():
+def test_schemas_cover_the_tools_and_diagnose():
     names = [s["function"]["name"] for s in TOOL_SCHEMAS]
-    assert names == ["search_code", "grep_symbol", "read_function", "get_callers", "get_callees", "run_failing_test"]
+    assert names == ["search_code", "grep_symbol", "read_function", "get_callers", "get_callees", "get_related",
+                     "run_failing_test"]
+    assert "other_changes" in DIAGNOSE_SCHEMA["function"]["parameters"]["properties"]
     assert DIAGNOSE_SCHEMA["function"]["parameters"]["required"] == ["file", "function", "cause", "fix", "confidence"]
     assert "run_failing_test" not in [s["function"]["name"] for s in Tools(_retriever()).schemas()]
 
@@ -141,11 +143,120 @@ def test_agent_verifier_feeds_back_a_failing_fix_once():
     script = ToolScript([ToolCall("diagnose", {**DIAG, "fix": WRONG_CHECKOUT}), ToolCall("diagnose", DIAG)])
     res = _agent(script, verifier=verifier).run("checkout returns the wrong amount")
     assert len(seen) == 2 and res.stop_reason == "verified" and res.verification["passed"]
-    assert "did not pass" in script.seen[1]["prompt"]
+    assert "the failing test still fails" in script.seen[1]["prompt"]      # target-first repair note
 
     always_fails = ToolScript([ToolCall("diagnose", {**DIAG, "fix": WRONG_CHECKOUT})] * 3)
     res2 = _agent(always_fails, verifier=verifier).run("checkout returns the wrong amount")
     assert res2.stop_reason == "verify_failed"
+
+
+def test_rejected_tool_call_is_recovered_not_fatal():
+    """Live thefuck-5: with only diagnose offered, the model called read_function and Groq answered HTTP 400."""
+    class Rejecting(ToolScript):
+        def chat(self, messages, tools=None, tool_choice=None):
+            if not self.seen:
+                self.seen.append({"tools": [t["function"]["name"] for t in tools], "choice": tool_choice,
+                                  "prompt": messages[-1]["content"]})
+                return LLMReply("", 0, 0, 0.0, [], rejected="attempted to call tool 'read_function' which was not "
+                                                            "in request.tools")
+            return super().chat(messages, tools, tool_choice)
+
+    script = Rejecting([ToolCall("diagnose", DIAG)])
+    res = _agent(script).run("checkout returns the wrong amount")
+    assert res.stop_reason == "diagnosed" and res.stats.failures == 1
+    assert "rejected" in res.trace[0] and "API rejected" in script.seen[1]["prompt"]
+
+
+def test_malformed_tool_call_is_repaired_from_the_refused_generation():
+    """Live thefuck-17: the model sent the same broken arguments 3 times at temperature 0 -> invalid_exhausted."""
+    broken = '{"name": "search_code", "arguments": {"query":"discount",""}"}'
+
+    class Broken(ToolScript):
+        def chat(self, messages, tools=None, tool_choice=None):
+            if not self.seen:
+                self.seen.append({"tools": [t["function"]["name"] for t in tools], "choice": tool_choice,
+                                  "prompt": messages[-1]["content"]})
+                return LLMReply(broken, 0, 0, 0.0, [], rejected="Failed to parse tool call arguments as JSON")
+            return super().chat(messages, tools, tool_choice)
+
+    script = Broken([ToolCall("diagnose", DIAG)])
+    res = _agent(script).run("checkout returns the wrong amount")
+    assert res.stop_reason == "diagnosed" and res.stats.tool_calls == 1 and res.stats.failures == 1
+    assert "repaired" in res.trace[0] and res.trace[0]["calls"] == [{"name": "search_code", "args": {"query": "discount"}}]
+    pytest.importorskip("langgraph")
+    from adaptive_context.agent_graph import _salvage
+    assert _salvage('{"name": "read_function", "arguments": {"name": "a.b"}}', [DIAGNOSE_SCHEMA]) == []   # not offered
+    assert _salvage('{"name": "diagnose", "arguments": {"file": "x.py"}}', [DIAGNOSE_SCHEMA]) == []       # incomplete
+
+
+def test_groq_tool_use_failed_becomes_a_rejected_reply(monkeypatch):
+    import io
+    import urllib.error
+
+    from adaptive_context.llm import GroqLLM
+    body = (b'{"error":{"message":"Tool call validation failed: attempted to call tool \'read_function\' which was '
+            b'not in request.tools","type":"invalid_request_error","code":"tool_use_failed",'
+            b'"failed_generation":"{\\"name\\": \\"read_function\\"}"}}')
+
+    def refuse(*a, **k):
+        raise urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(body))
+
+    monkeypatch.setattr("urllib.request.urlopen", refuse)
+    reply = GroqLLM(api_key="x").chat([{"role": "user", "content": "hi"}], tools=[DIAGNOSE_SCHEMA])
+    assert reply.tool_calls == [] and "not in request.tools" in reply.rejected and "read_function" in reply.text
+
+
+def test_a_lookup_miss_gets_one_more_round_before_forcing():
+    script = ToolScript([ToolCall("read_function", {"name": "no_such_function"}),
+                         ToolCall("read_function", {"name": "apply_discount"}), ToolCall("diagnose", DIAG)])
+    res = _agent(script).run("checkout returns the wrong amount")
+    assert "read_function" in script.seen[1]["tools"] and "found nothing" in script.seen[1]["prompt"]
+    assert res.stop_reason == "diagnosed" and res.stats.tool_calls == 2
+
+    repeats = ToolScript([ToolCall("search_code", {"query": "checkout returns the wrong amount"}),
+                          ToolCall("diagnose", DIAG)])
+    _agent(repeats, initial_k=10).run("checkout returns the wrong amount")
+    assert repeats.seen[1]["tools"] == ["diagnose"]                  # nothing new and nothing missed: done searching
+
+
+def test_read_function_on_a_file_path_returns_its_functions():
+    files = {"pkg/rules/git_push.py": "def match(c):\n    return 1\n\n\ndef get_new_command(c):\n    return 2\n",
+             "pkg/rules/other.py": "def match(c):\n    return 3\n"}
+    t = Tools(_retriever(files))
+    for name in ("pkg/rules/git_push.py", "pkg.rules.git_push"):
+        res = t.execute("read_function", {"name": name})
+        assert res.pin and sorted(c.id for c, _ in res.chunks) == ["pkg/rules/git_push.py::get_new_command",
+                                                                  "pkg/rules/git_push.py::match"]
+    big = Tools(_retriever({"pkg/big.py": "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(9))}))
+    res = big.execute("read_function", {"name": "pkg/big.py"})
+    assert not res.pin and len(res.chunks) == 9 and "is a file with 9 functions" in res.summary   # outlines
+    assert "outlines were added" in res.summary
+
+
+SHELLS = {"pkg/shells/generic.py": "class Generic:\n    def from_shell(self, c):\n        return c\n",
+          "pkg/shells/fish.py": "class Fish(Generic):\n    def from_shell(self, c):\n        return c + 'f'\n",
+          "pkg/shells/bash.py": "class Bash(Generic):\n    def app_alias(self, n):\n        return n\n\n"
+                                "    def get_aliases(self):\n        return {}\n",
+          "pkg/types.py": "class Settings(dict):\n    def update(self, **kw):\n        return Settings(kw)\n\n"
+                          "    def __getattr__(self, k):\n        return self.get(k)\n",
+          "tests/test_bash.py": "class TestBash:\n    def test_from_shell(self, x):\n        assert x\n"}
+
+
+def test_an_explicit_file_is_respected_and_inheritance_is_hinted():
+    """Live thefuck-17: 'bash.py::Bash.from_shell' (inherited) used to return Fish/Generic.from_shell as if found."""
+    res = Tools(_retriever(SHELLS)).execute("read_function", {"name": "pkg/shells/bash.py::Bash.from_shell"})
+    assert res.chunks == [] and "no function 'Bash.from_shell' in pkg/shells/bash.py" in res.summary
+    assert "pkg/shells/generic.py::Generic.from_shell" in res.summary and "inherited" in res.summary
+
+
+def test_a_class_name_returns_its_methods():
+    """Live thefuck-29: read_function('thefuck/types.py::Settings') found nothing; the bug was in Settings.update."""
+    t = Tools(_retriever(SHELLS))
+    for name in ("pkg/types.py::Settings", "pkg.types.Settings", "Settings"):
+        assert sorted(c.id for c, _ in t.execute("read_function", {"name": name}).chunks) == \
+            ["pkg/types.py::Settings.__getattr__", "pkg/types.py::Settings.update"], name
+    assert [c.id for c, _ in t.execute("read_function", {"name": "tests/test_bash.py::TestBash::test_from_shell[x]"})
+            .chunks] == ["tests/test_bash.py::TestBash.test_from_shell"]
 
 
 def test_agent_pins_the_failing_test_named_in_the_report():
@@ -165,3 +276,57 @@ def test_simulator_drives_the_graph_offline():
         res = lg.LangGraphAgent(_retriever(case.files), lg.SimToolLLM(SimulatedLLM())).run(case.bug_report)
         solved += res.diagnosis.function == case.truth.function
     assert solved >= 18
+
+
+# ---------------------------------------------------------------- stakeholder cases (examples/, from his repo)
+AUTH = os.path.join(os.path.dirname(__file__), "..", "examples", "auth_bug")
+FIXED_CAN_ACCESS = '''def can_access(user, action):
+    """Return whether an active user may perform an action."""
+    role = str(user.get("role", "guest")).strip().lower()
+    return bool(user.get("active", False)) and action in permissions_for(role)'''
+
+
+def _auth_agent(script, **kw):
+    pytest.importorskip("langgraph")
+    from adaptive_context import agent_graph as lg
+    retr = BM25Retriever(chunk_repo(load_repo_dir(AUTH)))
+    return lg.LangGraphAgent(retr, script, tools=Tools(retr, AUTH, test_path="test_auth.py"), **kw)
+
+
+def _ids(summary):
+    return set(summary.split(": ", 1)[1].split(" (")[0].split(", ")) if "new matches:" in summary else set()
+
+
+def test_overlapping_searches_add_only_new_code_and_repeats_are_skipped():
+    """Stakeholder request: several searches that hit the same code must not fill the context with duplicates,
+    and the agent should still find new, useful code (here the permissions table the bug depends on)."""
+    q1 = {"query": "deactivated admin export access"}
+    q2 = {"query": "admin role export permission when account is not active"}        # overlaps q1's hits
+    diag = {"file": "auth.py", "function": "can_access", "cause": "admins skip the active check",
+            "fix": FIXED_CAN_ACCESS, "confidence": "high"}
+    script = ToolScript([ToolCall("search_code", q1), ToolCall("search_code", q2), ToolCall("search_code", q1),
+                         ToolCall("diagnose", diag)])
+    res = _auth_agent(script, initial_k=1).run(open(os.path.join(AUTH, "bug_report.txt")).read())
+    first, second, third = (t["results"][0]["summary"] for t in res.trace[:3])
+    assert _ids(first) and _ids(second) and not _ids(first) & _ids(second)      # the second search brings new code
+    assert "permissions.py::permissions_for" in _ids(first) | _ids(second)
+    assert third.startswith("already called in round 1")                         # an identical search is not rerun
+    ids = [cid for cid, _ in res.context_items]
+    assert len(ids) == len(set(ids)) and "permissions.py::permissions_for" in ids  # no duplicate chunks in context
+    assert res.diagnosis.function == "can_access"
+
+
+def test_agent_verify_solves_the_stakeholder_auth_bug():
+    from adaptive_context.multifix import TestOracle
+    oracle = TestOracle(AUTH, python=None, test_cmd="pytest -q test_auth.py")
+    wrong = FIXED_CAN_ACCESS.replace('bool(user.get("active", False)) and ', "")
+    script = ToolScript([ToolCall("read_function", {"name": "can_access"}),
+                         ToolCall("diagnose", {"file": "auth.py", "function": "can_access", "cause": "admin bypass",
+                                               "fix": wrong, "confidence": "high"}),
+                         ToolCall("diagnose", {"file": "auth.py", "function": "can_access",
+                                               "cause": "admins skip the active check", "fix": FIXED_CAN_ACCESS,
+                                               "confidence": "high"})])
+    res = _auth_agent(script, verifier=oracle.check, max_verify=2).run(
+        open(os.path.join(AUTH, "bug_report.txt")).read())
+    assert res.stop_reason == "verified" and res.verification["passed"]
+    assert "test_deactivated_admin_cannot_export" in script.seen[2]["prompt"]       # the failure was fed back
